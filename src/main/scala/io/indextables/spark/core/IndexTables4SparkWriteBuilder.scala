@@ -35,25 +35,39 @@ class IndexTables4SparkWriteBuilder(
     with SupportsTruncate
     with SupportsOverwrite {
 
-  private val logger      = LoggerFactory.getLogger(classOf[IndexTables4SparkWriteBuilder])
-  private var isOverwrite = false
+  private val logger                                        = LoggerFactory.getLogger(classOf[IndexTables4SparkWriteBuilder])
+  private var isOverwrite                                   = false
+  private var replaceWherePredicate: Option[String]         = None
 
   override def truncate(): WriteBuilder = {
     logger.info("Truncate mode enabled for write operation")
     isOverwrite = true
+    replaceWherePredicate = None // Truncate is full table overwrite, no predicate
     this
   }
 
   override def overwrite(filters: Array[org.apache.spark.sql.sources.Filter]): WriteBuilder = {
     logger.info(s"Overwrite mode enabled with ${filters.length} filters")
     isOverwrite = true
-    // For now, ignore filters and do full table overwrite
-    // TODO: Implement filter-based overwrite (replaceWhere functionality)
+
+    // Check for replaceWhere option in the options map
+    // This is set by Spark when using .option("replaceWhere", "predicate") with SaveMode.Overwrite
+    val replaceWhereOption = Option(options.get("replaceWhere"))
+    replaceWherePredicate = replaceWhereOption
+
+    if (replaceWhereOption.isDefined) {
+      logger.info(s"ReplaceWhere predicate detected: ${replaceWhereOption.get}")
+    } else if (filters.nonEmpty) {
+      // If filters are provided but no replaceWhere option, log a warning
+      // Spark may pass filters from DataFrame operations
+      logger.info(s"Overwrite with filters (not replaceWhere): ${filters.map(_.toString).mkString(", ")}")
+    }
+
     this
   }
 
   override def build(): org.apache.spark.sql.connector.write.Write = {
-    logger.info(s"Building write for table at: $tablePath (overwrite mode: $isOverwrite)")
+    logger.info(s"Building write for table at: $tablePath (overwrite mode: $isOverwrite, replaceWhere: ${replaceWherePredicate.getOrElse("none")})")
 
     // Serialize options to Map[String, String] to avoid CaseInsensitiveStringMap serialization issues
     // Use the enhanced options that may contain partition information, not info.options()
@@ -72,7 +86,7 @@ class IndexTables4SparkWriteBuilder(
 
     logger.info("Using IndexTables4SparkStandardWrite")
     val standardWrite =
-      new IndexTables4SparkStandardWrite(transactionLog, tablePath, info, serializedOptions, hadoopConf, isOverwrite)
+      new IndexTables4SparkStandardWrite(transactionLog, tablePath, info, serializedOptions, hadoopConf, isOverwrite, replaceWherePredicate)
     logger.info(s"Created write instance: ${standardWrite.getClass.getSimpleName}")
     standardWrite
   }

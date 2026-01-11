@@ -403,6 +403,109 @@ class TransactionLog(
     version
   }
 
+  /**
+   * Replaces files matching a partition predicate with new files (replaceWhere).
+   *
+   * This operation atomically removes all files matching the predicate and adds the new files
+   * in a single transaction. It is used for selective partition overwrite functionality.
+   *
+   * @param addActions
+   *   Sequence of add actions for the new files
+   * @param predicateStr
+   *   The partition predicate string (e.g., "date = '2024-01-01'")
+   * @return
+   *   The transaction version number for this operation
+   * @throws IllegalArgumentException
+   *   if the table is not partitioned or predicate is invalid
+   */
+  override def replaceWhere(addActions: Seq[AddAction], predicateStr: String): Long = {
+    logger.info(s"ReplaceWhere operation started with predicate: $predicateStr")
+
+    // 1. Get partition columns from metadata
+    val metadata = getMetadata()
+    val partitionColumns = metadata.partitionColumns
+
+    // 2. Validate table is partitioned
+    if (partitionColumns.isEmpty) {
+      throw new IllegalArgumentException(
+        s"Cannot perform replaceWhere on non-partitioned table. " +
+          s"Table at $tablePath has no partition columns defined."
+      )
+    }
+
+    logger.info(s"Table has ${partitionColumns.size} partition columns: ${partitionColumns.mkString(", ")}")
+
+    // 3. Build partition schema using PartitionPredicateUtils
+    val partitionSchema = PartitionPredicateUtils.buildPartitionSchema(partitionColumns)
+
+    // 4. Parse and validate predicates
+    val parsedPredicates = PartitionPredicateUtils.parseAndValidatePredicates(
+      Seq(predicateStr),
+      partitionSchema,
+      spark
+    )
+
+    // 5. Get all existing files and filter those matching the predicate
+    val allFiles = listFiles()
+    if (allFiles.isEmpty) {
+      logger.info(s"No existing files to replace, adding ${addActions.length} new files")
+      // If no existing files, just add the new files
+      if (addActions.isEmpty) {
+        return getLatestVersion()
+      }
+      val version = getNextVersion()
+      writeActions(version, addActions)
+      cache.foreach(_.invalidateAll())
+      return version
+    }
+
+    val matchingFiles = PartitionPredicateUtils.filterAddActionsByPredicates(
+      allFiles,
+      partitionSchema,
+      parsedPredicates
+    )
+
+    logger.info(s"Found ${matchingFiles.length} files matching predicate out of ${allFiles.length} total files")
+
+    // 6. Create RemoveActions for matching files
+    val deletionTimestamp = System.currentTimeMillis()
+    val removeActions = matchingFiles.map { file =>
+      RemoveAction(
+        path = file.path,
+        deletionTimestamp = Some(deletionTimestamp),
+        dataChange = true,
+        extendedFileMetadata = Some(true),
+        partitionValues = Some(file.partitionValues),
+        size = Some(file.size),
+        tags = file.tags
+      )
+    }
+
+    // Log details of files to be replaced
+    val uniquePartitions = matchingFiles.map(_.partitionValues).distinct
+    uniquePartitions.foreach { partitionValues =>
+      val filesInPartition = matchingFiles.filter(_.partitionValues == partitionValues)
+      val totalSize = filesInPartition.map(_.size).sum
+      logger.info(s"  Replacing partition $partitionValues: ${filesInPartition.length} splits, $totalSize bytes")
+    }
+
+    // 7. Write REMOVE + ADD actions atomically in a single transaction
+    val version = getNextVersion()
+    val allActions: Seq[Action] = removeActions ++ addActions
+    writeActions(version, allActions)
+
+    // Invalidate cache since file list has changed
+    cache.foreach(_.invalidateAll())
+
+    val totalSizeRemoved = matchingFiles.map(_.size).sum
+    logger.info(
+      s"ReplaceWhere completed in version $version: removed ${removeActions.length} files ($totalSizeRemoved bytes), " +
+        s"added ${addActions.length} files"
+    )
+
+    version
+  }
+
   private def writeAction(version: Long, action: Action): Unit =
     writeActions(version, Seq(action))
 

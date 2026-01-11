@@ -42,7 +42,8 @@ class IndexTables4SparkStandardWrite(
   @transient writeInfo: LogicalWriteInfo,
   serializedOptions: Map[String, String], // Use serializable Map instead of CaseInsensitiveStringMap
   @transient hadoopConf: org.apache.hadoop.conf.Configuration,
-  isOverwrite: Boolean = false // Track whether this is an overwrite operation
+  isOverwrite: Boolean = false, // Track whether this is an overwrite operation
+  replaceWherePredicate: Option[String] = None // Optional predicate for selective partition overwrite
 ) extends Write
     with BatchWrite
     with Serializable {
@@ -213,16 +214,32 @@ class IndexTables4SparkStandardWrite(
     try {
       // Commit the changes to transaction log
       if (shouldOverwrite) {
-        logger.debug(s"COMMIT DEBUG: Performing OVERWRITE with ${addActions.length} new files")
-        val version = transactionLog.overwriteFiles(addActions)
-        logger.debug(s"COMMIT DEBUG: Overwrite completed in transaction version $version")
+        // Check if this is a replaceWhere operation (selective partition overwrite)
+        replaceWherePredicate match {
+          case Some(predicate) =>
+            logger.debug(s"COMMIT DEBUG: Performing REPLACEWHERE with predicate '$predicate' and ${addActions.length} new files")
+            val version = transactionLog.replaceWhere(addActions, predicate)
+            logger.debug(s"COMMIT DEBUG: ReplaceWhere completed in transaction version $version")
 
-        // Log what's in the transaction log after this operation
-        val filesAfter = transactionLog.listFiles()
-        logger.debug(s"COMMIT DEBUG: After OVERWRITE, transaction log contains ${filesAfter.length} files:")
-        filesAfter.foreach(action => logger.debug(s"  - ${action.path}: ${action.numRecords.getOrElse(0)} records"))
+            // Log what's in the transaction log after this operation
+            val filesAfter = transactionLog.listFiles()
+            logger.debug(s"COMMIT DEBUG: After REPLACEWHERE, transaction log contains ${filesAfter.length} files:")
+            filesAfter.foreach(action => logger.debug(s"  - ${action.path}: ${action.numRecords.getOrElse(0)} records"))
 
-        logger.info(s"Overwrite completed in transaction version $version, added ${addActions.length} files")
+            logger.info(s"ReplaceWhere completed in transaction version $version, added ${addActions.length} files")
+
+          case None =>
+            logger.debug(s"COMMIT DEBUG: Performing OVERWRITE with ${addActions.length} new files")
+            val version = transactionLog.overwriteFiles(addActions)
+            logger.debug(s"COMMIT DEBUG: Overwrite completed in transaction version $version")
+
+            // Log what's in the transaction log after this operation
+            val filesAfter = transactionLog.listFiles()
+            logger.debug(s"COMMIT DEBUG: After OVERWRITE, transaction log contains ${filesAfter.length} files:")
+            filesAfter.foreach(action => logger.debug(s"  - ${action.path}: ${action.numRecords.getOrElse(0)} records"))
+
+            logger.info(s"Overwrite completed in transaction version $version, added ${addActions.length} files")
+        }
       } else {
         logger.debug(s"COMMIT DEBUG: Performing APPEND with ${addActions.length} new files")
         // Standard append operation
