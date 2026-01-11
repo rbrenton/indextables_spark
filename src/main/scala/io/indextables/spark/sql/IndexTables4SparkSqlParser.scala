@@ -152,7 +152,7 @@ class IndexTables4SparkSqlParser(delegate: ParserInterface) extends ParserInterf
           IndexQueryExpression(left, right)
         } catch {
           case e: ParseException =>
-            // If parsing individual parts fails, delegate to default parser
+            logger.trace(s"IndexQuery expression parsing failed, delegating to default parser: ${e.getMessage}")
             delegate.parseExpression(sqlText)
         }
 
@@ -162,7 +162,7 @@ class IndexTables4SparkSqlParser(delegate: ParserInterface) extends ParserInterf
           IndexQueryAllExpression(query)
         } catch {
           case e: ParseException =>
-            // If parsing query fails, delegate to default parser
+            logger.trace(s"IndexQueryAll expression parsing failed, delegating to default parser: ${e.getMessage}")
             delegate.parseExpression(sqlText)
         }
 
@@ -200,7 +200,8 @@ class IndexTables4SparkSqlParser(delegate: ParserInterface) extends ParserInterf
         }
       }
     catch {
-      case _: Exception =>
+      case e: Exception =>
+        logger.trace(s"ANTLR query parsing failed, delegating to Spark parser: ${e.getMessage}")
         val preprocessedSql = preprocessIndexQueryOperators(sqlText)
         delegate.parseQuery(preprocessedSql)
     }

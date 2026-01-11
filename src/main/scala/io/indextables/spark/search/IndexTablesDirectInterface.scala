@@ -411,7 +411,9 @@ class TantivyDirectInterface(
           val sparkSession = org.apache.spark.sql.SparkSession.active
           sparkSession.conf.getOption(key).getOrElse(defaultValue)
         } catch {
-          case _: Exception => defaultValue
+          case e: Exception =>
+            logger.trace(s"SparkSession not active or config unavailable for key '$key': ${e.getMessage}")
+            defaultValue
         }
       }
     }
@@ -868,7 +870,8 @@ class TantivyDirectInterface(
       Thread.sleep(100)
       logger.debug("Waited 100ms for index files to be fully written to disk")
     } catch {
-      case _: InterruptedException => // Ignore interruption
+      case e: InterruptedException =>
+        logger.trace(s"Thread interrupted while waiting for index file flush: ${e.getMessage}")
     }
   }
 
@@ -940,7 +943,8 @@ class TantivyDirectInterface(
         writer.close()
         logger.debug(s"Closed IndexWriter for task thread ${Thread.currentThread().getName}")
       } catch {
-        case _: Exception => // Writer may already be closed
+        case e: Exception =>
+          logger.trace(s"Writer may already be closed: ${e.getMessage}")
       }
     }
     threadLocalWriter.remove()
@@ -950,7 +954,8 @@ class TantivyDirectInterface(
       index.close()
       logger.debug("Closed index in cleanup")
     } catch {
-      case _: Exception => // Index may already be closed from commit()
+      case e: Exception =>
+        logger.trace(s"Index may already be closed from commit(): ${e.getMessage}")
     }
 
     // Close schemaBuilder if it exists

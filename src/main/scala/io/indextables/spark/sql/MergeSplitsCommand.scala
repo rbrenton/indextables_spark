@@ -1037,10 +1037,10 @@ class MergeSplitsExecutor(
                       // CRITICAL DEBUG: Verify docMappingJson returned from tantivy4java merge
                       docMapping match {
                         case Some(json) =>
-                          logger.warn(
+                          logger.debug(
                             s"MERGE RESULT: docMappingJson extracted from merged split (${json.length} chars)"
                           )
-                          logger.warn(s"MERGE RESULT: docMappingJson content: $json")
+                          logger.debug(s"MERGE RESULT: docMappingJson content: $json")
                         case None =>
                           logger.error(
                             s"MERGE RESULT: No docMappingJson in merged split metadata - tantivy4java did not preserve it!"
@@ -1077,8 +1077,8 @@ class MergeSplitsExecutor(
                   // CRITICAL DEBUG: Verify docMappingJson being saved to AddAction
                   docMappingJson match {
                     case Some(json) =>
-                      logger.warn(s"TRANSACTION LOG: Saving AddAction with docMappingJson (${json.length} chars)")
-                      logger.warn(s"TRANSACTION LOG: docMappingJson being saved: $json")
+                      logger.debug(s"TRANSACTION LOG: Saving AddAction with docMappingJson (${json.length} chars)")
+                      logger.debug(s"TRANSACTION LOG: docMappingJson being saved: $json")
                     case None =>
                       logger.error(s"TRANSACTION LOG: AddAction has NO docMappingJson - fast fields will be lost!")
                   }
@@ -1199,7 +1199,7 @@ class MergeSplitsExecutor(
     // 4. Deletes original fragmental splits from storage
     // 5. Commits only the merged splits to transaction log
 
-    logger.warn("PRE-COMMIT MERGE: Implementation pending - this is a placeholder")
+    logger.debug("PRE-COMMIT MERGE: Implementation pending - this is a placeholder")
 
     Seq(
       Row(tablePath.toString, Row("pending", null, null, null, null, "Functionality pending implementation"), null, null)
@@ -1628,13 +1628,13 @@ object MergeSplitsExecutor {
         if (file.path.startsWith("s3://") || file.path.startsWith("s3a://")) {
           // file.path is already a full S3 URL, just normalize the scheme
           val normalized = file.path.replaceFirst("^s3a://", "s3://")
-          logger.warn(s"[EXECUTOR] Normalized full S3 path: ${file.path} -> $normalized")
+          logger.debug(s"[EXECUTOR] Normalized full S3 path: ${file.path} -> $normalized")
           normalized
         } else {
           // file.path is relative, construct full URL with normalized scheme
           val normalizedBaseUri = tablePathStr.replaceFirst("^s3a://", "s3://").replaceAll("/$", "")
           val fullPath          = s"$normalizedBaseUri/${file.path}"
-          logger.warn(s"[EXECUTOR] Constructed relative S3 path: ${file.path} -> $fullPath")
+          logger.debug(s"[EXECUTOR] Constructed relative S3 path: ${file.path} -> $fullPath")
           fullPath
         }
       } else if (isAzurePath) {
@@ -1667,13 +1667,13 @@ object MergeSplitsExecutor {
       // For S3 paths, construct the URL directly with s3:// normalization for tantivy4java compatibility
       val normalizedBaseUri = tablePathStr.replaceFirst("^s3a://", "s3://").replaceAll("/$", "")
       val outputPath        = s"$normalizedBaseUri/$mergedPath"
-      logger.warn(s"[EXECUTOR] Normalized output path: $tablePathStr/$mergedPath -> $outputPath")
+      logger.debug(s"[EXECUTOR] Normalized output path: $tablePathStr/$mergedPath -> $outputPath")
       outputPath
     } else if (isAzurePath) {
       // For Azure paths, construct the URL with azure:// normalization for tantivy4java compatibility
       val normalizedBaseUri = normalizeAzureUrl(tablePathStr).replaceAll("/$", "")
       val outputPath        = s"$normalizedBaseUri/$mergedPath"
-      logger.warn(s"[EXECUTOR] Normalized Azure output path: $tablePathStr/$mergedPath -> $outputPath")
+      logger.debug(s"[EXECUTOR] Normalized Azure output path: $tablePathStr/$mergedPath -> $outputPath")
       outputPath
     } else {
       // For local/HDFS paths, extract raw path for tantivy4java (not file: URI)
@@ -1707,7 +1707,7 @@ object MergeSplitsExecutor {
         logger.error(errorMsg)
         throw new IllegalStateException(errorMsg)
       }
-    logger.warn(s"MERGE INPUT: Using docMappingJson from source split[0]: $docMappingJson")
+    logger.debug(s"MERGE INPUT: Using docMappingJson from source split[0]: $docMappingJson")
 
     // Create merge configuration with broadcast AWS and Azure credentials and temp directory
     val mergeConfigBuilder = QuickwitSplit.MergeConfig
@@ -1736,14 +1736,14 @@ object MergeSplitsExecutor {
     val mergeConfig = mergeConfigBuilder.build()
 
     // Perform the actual merge using direct/in-process merge
-    logger.warn(s"[EXECUTOR] Executing direct merge with ${inputSplitPaths.size()} input paths")
-    logger.warn(s"[EXECUTOR] Input paths:")
+    logger.debug(s"[EXECUTOR] Executing direct merge with ${inputSplitPaths.size()} input paths")
+    logger.debug(s"[EXECUTOR] Input paths:")
     inputSplitPaths.asScala.zipWithIndex.foreach {
       case (path, idx) =>
-        logger.warn(s"[EXECUTOR]   [$idx]: $path")
+        logger.debug(s"[EXECUTOR]   [$idx]: $path")
     }
-    logger.warn(s"[EXECUTOR] Output path: $outputSplitPath")
-    logger.warn(s"[EXECUTOR] Relative path for transaction log: $mergedPath")
+    logger.debug(s"[EXECUTOR] Output path: $outputSplitPath")
+    logger.debug(s"[EXECUTOR] Relative path for transaction log: $mergedPath")
     logger.info(s"[EXECUTOR] Executing direct merge with ${inputSplitPaths.size()} input paths")
 
     val serializedMetadata =
