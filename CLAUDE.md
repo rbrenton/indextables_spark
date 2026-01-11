@@ -205,6 +205,27 @@ df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("s3://bucket/path")
 ```
 
+### ReplaceWhere (Selective Partition Overwrite)
+```scala
+// Replace only data matching the predicate (Delta Lake compatible)
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
+  .mode(SaveMode.Overwrite)
+  .option("replaceWhere", "date = '2024-01-01'")
+  .partitionBy("date")
+  .save("s3://bucket/path")
+
+// Supported predicates:
+// - Equality: "date = '2024-01-01'"
+// - IN clause: "date IN ('2024-01-01', '2024-01-02')"
+// - Range: "date >= '2024-01-01'"
+// - Compound: "year = '2024' AND month = '01'"
+
+// Requirements:
+// - Table must be partitioned
+// - Predicate must reference only partition columns
+// - Atomically removes matching files and adds new data
+```
+
 ### Read & Query
 ```scala
 val df = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider").load("s3://bucket/path")
