@@ -2190,4 +2190,515 @@ class ParquetCheckpointTest extends TestBase {
       }
     }
   }
+
+  // ==========================================================================
+  // Mixed-Format Checkpoint Tests (JSON/Parquet Fallback)
+  // ==========================================================================
+
+  test("should read JSON checkpoint after enabling Parquet format (fallback)") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+
+      // Step 1: Create table with JSON checkpoint format
+      val jsonOptions = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.format" -> "json",
+        "spark.indextables.checkpoint.interval" -> "3"
+      ).asJava)
+
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        jsonOptions,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        // Create JSON checkpoint using TransactionLogCheckpoint
+        val jsonCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          jsonOptions,
+          Some(spark)
+        )
+
+        val originalActions: Seq[Action] = Seq(
+          ProtocolAction(1, 1),
+          MetadataAction(
+            id = "json-table",
+            name = Some("JSON Format Table"),
+            description = None,
+            format = FileFormat("indextables", Map.empty),
+            schemaString = """{"type":"struct","fields":[]}""",
+            partitionColumns = Seq.empty,
+            configuration = Map.empty,
+            createdTime = Some(System.currentTimeMillis())
+          )
+        ) ++ (1 to 10).map { i =>
+          AddAction(
+            path = s"json-file-$i.split",
+            partitionValues = Map("partition" -> (i % 3).toString),
+            size = i * 1000L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 100L)
+          )
+        }
+
+        // Create JSON checkpoint at version 5
+        jsonCheckpointer.createCheckpoint(5L, originalActions)
+        jsonCheckpointer.close()
+
+        // Verify JSON checkpoint file exists
+        val jsonCheckpointPath = new Path(transactionLogPath, "00000000000000000005.checkpoint.json")
+        assert(cloudProvider.exists(jsonCheckpointPath.toString), "JSON checkpoint file should exist")
+
+        // Step 2: Now enable Parquet format and try to read
+        val parquetOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "parquet",
+          "spark.indextables.checkpoint.interval" -> "3"
+        ).asJava)
+
+        val parquetCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          parquetOptions,
+          Some(spark)
+        )
+
+        // Read using the Parquet-enabled checkpointer - should fall back to JSON
+        val readActionsOpt = parquetCheckpointer.getActionsFromCheckpoint()
+        parquetCheckpointer.close()
+
+        // Step 3: Verify all data is present
+        assert(readActionsOpt.isDefined, "Should successfully read JSON checkpoint with Parquet format enabled")
+        val readActions = readActionsOpt.get
+
+        assert(readActions.length === originalActions.length, "Action count should match")
+        assert(readActions.count(_.isInstanceOf[ProtocolAction]) === 1)
+        assert(readActions.count(_.isInstanceOf[MetadataAction]) === 1)
+        assert(readActions.count(_.isInstanceOf[AddAction]) === 10)
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("mixed JSON and Parquet checkpoints should coexist with latest Parquet taking precedence") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        new CaseInsensitiveStringMap(Map.empty[String, String].asJava),
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        // Step 1: Create JSON checkpoint at version N
+        val jsonOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "json",
+          "spark.indextables.checkpoint.interval" -> "5"
+        ).asJava)
+
+        val jsonCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          jsonOptions,
+          Some(spark)
+        )
+
+        val jsonActions: Seq[Action] = Seq(
+          ProtocolAction(1, 1),
+          MetadataAction(
+            id = "mixed-table",
+            name = Some("Mixed Format Table"),
+            description = None,
+            format = FileFormat("indextables", Map.empty),
+            schemaString = """{"type":"struct","fields":[]}""",
+            partitionColumns = Seq.empty,
+            configuration = Map.empty,
+            createdTime = Some(System.currentTimeMillis())
+          )
+        ) ++ (1 to 5).map { i =>
+          AddAction(
+            path = s"json-era-file-$i.split",
+            partitionValues = Map.empty,
+            size = i * 1000L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 100L)
+          )
+        }
+
+        // Create JSON checkpoint at version 10
+        jsonCheckpointer.createCheckpoint(10L, jsonActions)
+        jsonCheckpointer.close()
+
+        // Verify JSON checkpoint exists
+        val jsonCheckpointPath = new Path(transactionLogPath, "00000000000000000010.checkpoint.json")
+        assert(cloudProvider.exists(jsonCheckpointPath.toString), "JSON checkpoint should exist at version 10")
+
+        // Step 2: Switch to Parquet format and write more data
+        val parquetOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "parquet",
+          "spark.indextables.checkpoint.interval" -> "5"
+        ).asJava)
+
+        val parquetCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          parquetOptions,
+          Some(spark)
+        )
+
+        // Create new checkpoint with both old and new files (simulating accumulated state)
+        val allActions: Seq[Action] = Seq(
+          ProtocolAction(1, 1),
+          MetadataAction(
+            id = "mixed-table",
+            name = Some("Mixed Format Table"),
+            description = None,
+            format = FileFormat("indextables", Map.empty),
+            schemaString = """{"type":"struct","fields":[]}""",
+            partitionColumns = Seq.empty,
+            configuration = Map.empty,
+            createdTime = Some(System.currentTimeMillis())
+          )
+        ) ++ (1 to 5).map { i =>
+          AddAction(
+            path = s"json-era-file-$i.split",
+            partitionValues = Map.empty,
+            size = i * 1000L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 100L)
+          )
+        } ++ (1 to 5).map { i =>
+          AddAction(
+            path = s"parquet-era-file-$i.split",
+            partitionValues = Map.empty,
+            size = i * 2000L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 200L)
+          )
+        }
+
+        // Create Parquet checkpoint at version 20
+        parquetCheckpointer.createCheckpoint(20L, allActions)
+        parquetCheckpointer.close()
+
+        // Verify Parquet checkpoint exists
+        val parquetCheckpointsDir = new Path(transactionLogPath, "_checkpoints")
+        val parquetCheckpointPath = new Path(parquetCheckpointsDir, "00000000000000000020.checkpoint.parquet")
+        assert(cloudProvider.exists(parquetCheckpointPath.toString), "Parquet checkpoint should exist at version 20")
+
+        // Both checkpoints should exist on disk
+        assert(cloudProvider.exists(jsonCheckpointPath.toString), "Old JSON checkpoint should still exist")
+
+        // Step 3: Read table - should use latest Parquet checkpoint
+        val readerOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "parquet"
+        ).asJava)
+
+        val reader = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          readerOptions,
+          Some(spark)
+        )
+
+        val readActionsOpt = reader.getActionsFromCheckpoint()
+        reader.close()
+
+        // Verify all data from Parquet checkpoint
+        assert(readActionsOpt.isDefined, "Should read from Parquet checkpoint")
+        val readActions = readActionsOpt.get
+
+        assert(readActions.length === allActions.length, "Should have all actions from Parquet checkpoint")
+        assert(readActions.count(_.isInstanceOf[AddAction]) === 10, "Should have 10 AddActions (5 old + 5 new)")
+
+        // Verify we have files from both eras
+        val addActions = readActions.collect { case a: AddAction => a }
+        assert(addActions.exists(_.path.contains("json-era")), "Should have files from JSON era")
+        assert(addActions.exists(_.path.contains("parquet-era")), "Should have files from Parquet era")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("format switching mid-session should create seamless transition") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        new CaseInsensitiveStringMap(Map.empty[String, String].asJava),
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        // Step 1: Write initial data with JSON format
+        val jsonOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "json",
+          "spark.indextables.checkpoint.interval" -> "3"
+        ).asJava)
+
+        val jsonCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          jsonOptions,
+          Some(spark)
+        )
+
+        // Verify format is JSON
+        assert(jsonCheckpointer.getCheckpointFormat === "json", "Initial format should be JSON")
+
+        val initialActions: Seq[Action] = Seq(
+          ProtocolAction(1, 1),
+          MetadataAction(
+            id = "session-table",
+            name = Some("Session Test Table"),
+            description = None,
+            format = FileFormat("indextables", Map.empty),
+            schemaString = """{"type":"struct","fields":[]}""",
+            partitionColumns = Seq("date"),
+            configuration = Map.empty,
+            createdTime = Some(System.currentTimeMillis())
+          )
+        ) ++ (1 to 3).map { i =>
+          AddAction(
+            path = s"initial-file-$i.split",
+            partitionValues = Map("date" -> "2024-01-01"),
+            size = i * 1000L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 50L)
+          )
+        }
+
+        jsonCheckpointer.createCheckpoint(5L, initialActions)
+        jsonCheckpointer.close()
+
+        // Verify JSON checkpoint created
+        val jsonCheckpointPath = new Path(transactionLogPath, "00000000000000000005.checkpoint.json")
+        assert(cloudProvider.exists(jsonCheckpointPath.toString), "JSON checkpoint should be created")
+
+        // Step 2: Switch to Parquet format mid-session
+        val parquetOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "parquet",
+          "spark.indextables.checkpoint.interval" -> "3"
+        ).asJava)
+
+        val parquetCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          parquetOptions,
+          Some(spark)
+        )
+
+        // Verify format switched to Parquet
+        assert(parquetCheckpointer.getCheckpointFormat === "parquet", "Format should now be Parquet")
+
+        // Read existing data first (should fall back to JSON)
+        val existingActions = parquetCheckpointer.getActionsFromCheckpoint()
+        assert(existingActions.isDefined, "Should be able to read JSON checkpoint after format switch")
+        assert(existingActions.get.length === initialActions.length, "Should have all initial actions")
+
+        // Step 3: Write more data with Parquet format
+        val updatedActions: Seq[Action] = Seq(
+          ProtocolAction(1, 1),
+          MetadataAction(
+            id = "session-table",
+            name = Some("Session Test Table"),
+            description = None,
+            format = FileFormat("indextables", Map.empty),
+            schemaString = """{"type":"struct","fields":[]}""",
+            partitionColumns = Seq("date"),
+            configuration = Map.empty,
+            createdTime = Some(System.currentTimeMillis())
+          )
+        ) ++ (1 to 3).map { i =>
+          AddAction(
+            path = s"initial-file-$i.split",
+            partitionValues = Map("date" -> "2024-01-01"),
+            size = i * 1000L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 50L)
+          )
+        } ++ (1 to 3).map { i =>
+          AddAction(
+            path = s"updated-file-$i.split",
+            partitionValues = Map("date" -> "2024-01-02"),
+            size = i * 1500L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 75L)
+          )
+        }
+
+        parquetCheckpointer.createCheckpoint(10L, updatedActions)
+        parquetCheckpointer.close()
+
+        // Verify Parquet checkpoint created
+        val parquetCheckpointsDir = new Path(transactionLogPath, "_checkpoints")
+        val parquetCheckpointPath = new Path(parquetCheckpointsDir, "00000000000000000010.checkpoint.parquet")
+        assert(cloudProvider.exists(parquetCheckpointPath.toString), "Parquet checkpoint should be created")
+
+        // Step 4: Verify seamless transition - read with a new reader
+        val finalReader = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          parquetOptions,
+          Some(spark)
+        )
+
+        val finalActionsOpt = finalReader.getActionsFromCheckpoint()
+        finalReader.close()
+
+        assert(finalActionsOpt.isDefined, "Should read final checkpoint")
+        val finalActions = finalActionsOpt.get
+
+        assert(finalActions.length === updatedActions.length, "Should have all updated actions")
+        assert(finalActions.count(_.isInstanceOf[AddAction]) === 6, "Should have 6 AddActions")
+
+        // Verify we have files from both dates
+        val addActions = finalActions.collect { case a: AddAction => a }
+        assert(addActions.exists(_.partitionValues.get("date").contains("2024-01-01")), "Should have files from first date")
+        assert(addActions.exists(_.partitionValues.get("date").contains("2024-01-02")), "Should have files from second date")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("TransactionLogCheckpoint.getLastCheckpointInfo reads format field correctly") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        new CaseInsensitiveStringMap(Map.empty[String, String].asJava),
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        // Write a _last_checkpoint file with format field
+        val lastCheckpointPath = new Path(transactionLogPath, "_last_checkpoint")
+
+        // Test JSON format
+        val jsonCheckpointContent = """{"version":5,"size":10,"sizeInBytes":5000,"numFiles":8,"createdTime":1705312000000,"format":"json"}"""
+        cloudProvider.writeFile(lastCheckpointPath.toString, jsonCheckpointContent.getBytes("UTF-8"))
+
+        val jsonOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "json"
+        ).asJava)
+
+        val jsonCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          jsonOptions,
+          Some(spark)
+        )
+
+        val jsonInfoOpt = jsonCheckpointer.getLastCheckpointInfo()
+        jsonCheckpointer.close()
+
+        assert(jsonInfoOpt.isDefined)
+        assert(jsonInfoOpt.get.version === 5L)
+        assert(jsonInfoOpt.get.size === 10L)
+
+        // Test Parquet format in _last_checkpoint
+        val parquetCheckpointContent = """{"version":10,"size":20,"sizeInBytes":10000,"numFiles":15,"createdTime":1705312000000,"format":"parquet"}"""
+        cloudProvider.writeFile(lastCheckpointPath.toString, parquetCheckpointContent.getBytes("UTF-8"))
+
+        // Read with ParquetCheckpointReader to verify format detection
+        val parquetOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "parquet"
+        ).asJava)
+
+        val parquetReader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, parquetOptions)
+        val parquetInfoOpt = parquetReader.getLastCheckpointInfo()
+
+        assert(parquetInfoOpt.isDefined)
+        assert(parquetInfoOpt.get.version === 10L)
+        assert(parquetInfoOpt.get.isParquetFormat)
+        assert(!parquetInfoOpt.get.isJsonFormat)
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("ParquetCheckpointReader falls back gracefully when no Parquet checkpoint exists") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        new CaseInsensitiveStringMap(Map.empty[String, String].asJava),
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        // Create a JSON checkpoint only
+        val jsonOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "json"
+        ).asJava)
+
+        val jsonCheckpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          jsonOptions,
+          Some(spark)
+        )
+
+        val actions: Seq[Action] = Seq(
+          ProtocolAction(1, 1),
+          AddAction("test-file.split", Map.empty, 1000L, System.currentTimeMillis(), true)
+        )
+
+        jsonCheckpointer.createCheckpoint(5L, actions)
+        jsonCheckpointer.close()
+
+        // Try to read with Parquet reader directly
+        val parquetOptions = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.format" -> "parquet"
+        ).asJava)
+
+        val parquetReader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, parquetOptions)
+
+        // getActionsFromCheckpoint should return None (not Parquet format)
+        val parquetActionsOpt = parquetReader.getActionsFromCheckpoint()
+        assert(parquetActionsOpt.isEmpty, "ParquetCheckpointReader should return None for JSON checkpoint")
+
+        // But TransactionLogCheckpoint should fall back to JSON
+        val checkpointer = new TransactionLogCheckpoint(
+          transactionLogPath,
+          cloudProvider,
+          parquetOptions,
+          Some(spark)
+        )
+
+        val fallbackActionsOpt = checkpointer.getActionsFromCheckpoint()
+        checkpointer.close()
+
+        assert(fallbackActionsOpt.isDefined, "TransactionLogCheckpoint should fall back to JSON checkpoint")
+        assert(fallbackActionsOpt.get.length === 2, "Should have all actions from JSON checkpoint")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
 }
