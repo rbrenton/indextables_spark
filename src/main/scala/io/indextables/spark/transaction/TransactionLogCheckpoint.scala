@@ -24,6 +24,7 @@ import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 
 import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.SparkSession
 
 import io.indextables.spark.io.CloudStorageProvider
 import io.indextables.spark.transaction.compression.{CompressionCodec, CompressionUtils}
@@ -47,7 +48,8 @@ case class LastCheckpointInfo(
 class TransactionLogCheckpoint(
   transactionLogPath: Path,
   cloudProvider: CloudStorageProvider,
-  options: org.apache.spark.sql.util.CaseInsensitiveStringMap) {
+  options: org.apache.spark.sql.util.CaseInsensitiveStringMap,
+  spark: Option[SparkSession] = None) {
 
   private val logger = LoggerFactory.getLogger(classOf[TransactionLogCheckpoint])
 
@@ -81,6 +83,28 @@ class TransactionLogCheckpoint(
         None
     }
 
+  // Checkpoint format configuration: "json" (default) or "parquet"
+  private val checkpointFormat: String = {
+    val format = Option(options.get("spark.indextables.checkpoint.format")).getOrElse("json").toLowerCase
+    if (format != "json" && format != "parquet") {
+      logger.warn(s"Invalid checkpoint format '$format', defaulting to 'json'")
+      "json"
+    } else {
+      format
+    }
+  }
+
+  // Lazy initialize Parquet components (only when SparkSession is available)
+  private lazy val parquetWriter: Option[ParquetCheckpointWriter] =
+    if (spark.isDefined && checkpointFormat == "parquet")
+      Some(new ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark.get, options))
+    else None
+
+  private lazy val parquetReader: Option[ParquetCheckpointReader] =
+    if (spark.isDefined)
+      Some(new ParquetCheckpointReader(transactionLogPath, cloudProvider, spark.get, options))
+    else None
+
   private val executor                      = Executors.newFixedThreadPool(parallelism).asInstanceOf[ThreadPoolExecutor]
   implicit private val ec: ExecutionContext = ExecutionContext.fromExecutor(executor)
 
@@ -105,8 +129,35 @@ class TransactionLogCheckpoint(
     currentVersion: Long,
     allActions: Seq[Action]
   ): Unit = {
-    logger.info(s"Creating checkpoint for version $currentVersion with ${allActions.length} actions")
+    logger.info(s"Creating checkpoint for version $currentVersion with ${allActions.length} actions (format: $checkpointFormat)")
 
+    // Use Parquet writer if available and format is parquet
+    parquetWriter match {
+      case Some(writer) =>
+        try {
+          writer.writeCheckpoint(currentVersion, allActions)
+          logger.info(
+            s"Successfully created Parquet checkpoint at version $currentVersion with ${allActions.length} actions"
+          )
+        } catch {
+          case e: Exception =>
+            logger.error(s"Failed to create Parquet checkpoint for version $currentVersion", e)
+            throw e
+        }
+
+      case None =>
+        // Fall back to JSON checkpoint
+        createJsonCheckpoint(currentVersion, allActions)
+    }
+  }
+
+  /**
+   * Creates a JSON-format checkpoint (original implementation).
+   */
+  private def createJsonCheckpoint(
+    currentVersion: Long,
+    allActions: Seq[Action]
+  ): Unit =
     try {
       val checkpointPath    = new Path(transactionLogPath, f"$currentVersion%020d.checkpoint.json")
       val checkpointPathStr = checkpointPath.toString
@@ -144,23 +195,37 @@ class TransactionLogCheckpoint(
       writeLastCheckpointFile(checkpointInfo)
 
       logger.info(
-        s"Successfully created checkpoint at version $currentVersion with ${allActions.length} actions$compressionInfo"
+        s"Successfully created JSON checkpoint at version $currentVersion with ${allActions.length} actions$compressionInfo"
       )
     } catch {
       case e: Exception =>
-        logger.error(s"Failed to create checkpoint for version $currentVersion", e)
+        logger.error(s"Failed to create JSON checkpoint for version $currentVersion", e)
         throw e
     }
-  }
 
   def getActionsFromCheckpoint(): Option[Seq[Action]] =
+    // Try Parquet reader first if available (it checks _last_checkpoint format)
+    parquetReader.flatMap(_.getActionsFromCheckpoint()) match {
+      case Some(actions) =>
+        logger.debug(s"Successfully read ${actions.length} actions from Parquet checkpoint")
+        Some(actions)
+
+      case None =>
+        // Fall back to JSON checkpoint reading
+        getActionsFromJsonCheckpoint()
+    }
+
+  /**
+   * Reads actions from a JSON-format checkpoint (original implementation).
+   */
+  private def getActionsFromJsonCheckpoint(): Option[Seq[Action]] =
     getLastCheckpointInfo().flatMap { info =>
       Try {
         val checkpointPath    = new Path(transactionLogPath, f"${info.version}%020d.checkpoint.json")
         val checkpointPathStr = checkpointPath.toString
 
         if (!cloudProvider.exists(checkpointPathStr)) {
-          logger.warn(s"Checkpoint file does not exist: $checkpointPathStr")
+          logger.warn(s"JSON checkpoint file does not exist: $checkpointPathStr")
           return None
         }
 
@@ -172,7 +237,7 @@ class TransactionLogCheckpoint(
       } match {
         case Success(actions) => Some(actions)
         case Failure(e) =>
-          logger.error("Failed to read checkpoint file", e)
+          logger.error("Failed to read JSON checkpoint file", e)
           None
       }
     }
@@ -286,6 +351,11 @@ class TransactionLogCheckpoint(
   def getLastCheckpointVersion(): Option[Long] =
     getLastCheckpointInfo().map(_.version)
 
+  /**
+   * Returns the configured checkpoint format ("json" or "parquet").
+   */
+  def getCheckpointFormat: String = checkpointFormat
+
   def cleanupOldVersions(currentVersion: Long): Unit =
     getLastCheckpointVersion() match {
       case Some(checkpointVersion) if checkpointVersion <= currentVersion =>
@@ -336,25 +406,75 @@ class TransactionLogCheckpoint(
 
   private def cleanupOldCheckpoints(currentTime: Long): Unit =
     try {
-      val files           = cloudProvider.listFiles(transactionLogPath.toString, recursive = false)
-      val checkpointFiles = files.filter(_.path.contains(".checkpoint.json"))
-
       var deletedCheckpoints = 0
-      checkpointFiles.foreach { file =>
+      val lastCheckpoint     = getLastCheckpointInfo()
+
+      // Clean up JSON checkpoints in transaction log directory
+      val files              = cloudProvider.listFiles(transactionLogPath.toString, recursive = false)
+      val jsonCheckpointFiles = files.filter(_.path.contains(".checkpoint.json"))
+
+      jsonCheckpointFiles.foreach { file =>
         val fileAge = currentTime - file.modificationTime
         if (fileAge > checkpointRetentionDuration) {
           // Keep at least the most recent checkpoint
           val fileName = new Path(file.path).getName
-          if (!getLastCheckpointInfo().exists(info => fileName.startsWith(f"${info.version}%020d"))) {
+          if (!lastCheckpoint.exists(info => fileName.startsWith(f"${info.version}%020d"))) {
             try {
               cloudProvider.deleteFile(file.path)
               deletedCheckpoints += 1
-              logger.debug(s"Deleted old checkpoint file: ${file.path} (age: ${fileAge / 1000}s)")
+              logger.debug(s"Deleted old JSON checkpoint file: ${file.path} (age: ${fileAge / 1000}s)")
             } catch {
               case e: Exception =>
                 logger.warn(s"Failed to delete old checkpoint file ${file.path}", e)
             }
           }
+        }
+      }
+
+      // Clean up Parquet checkpoints in _checkpoints/ subdirectory
+      val checkpointsDir    = new Path(transactionLogPath, "_checkpoints")
+      val checkpointsDirStr = checkpointsDir.toString
+      if (cloudProvider.exists(checkpointsDirStr)) {
+        Try {
+          cloudProvider.listFiles(checkpointsDirStr, recursive = true)
+        } match {
+          case Success(parquetFiles) =>
+            // Group files by checkpoint version directory
+            val parquetCheckpointDirs = parquetFiles
+              .filter(_.path.contains(".checkpoint.parquet"))
+              .map(f => new Path(f.path).getParent.toString)
+              .distinct
+
+            parquetCheckpointDirs.foreach { dirPath =>
+              val dirFiles = parquetFiles.filter(_.path.startsWith(dirPath))
+              val oldestModTime = if (dirFiles.nonEmpty) dirFiles.map(_.modificationTime).min else currentTime
+              val fileAge = currentTime - oldestModTime
+
+              if (fileAge > checkpointRetentionDuration) {
+                // Extract version from directory name
+                val dirName = new Path(dirPath).getName
+                val versionMatch = """(\d+)\.checkpoint\.parquet""".r.findFirstMatchIn(dirName)
+                val keepCheckpoint = versionMatch.exists { m =>
+                  val version = m.group(1).toLong
+                  lastCheckpoint.exists(_.version == version)
+                }
+
+                if (!keepCheckpoint) {
+                  try {
+                    // Delete all files in the checkpoint directory
+                    dirFiles.foreach(f => cloudProvider.deleteFile(f.path))
+                    deletedCheckpoints += 1
+                    logger.debug(s"Deleted old Parquet checkpoint: $dirPath (age: ${fileAge / 1000}s)")
+                  } catch {
+                    case e: Exception =>
+                      logger.warn(s"Failed to delete old Parquet checkpoint $dirPath", e)
+                  }
+                }
+              }
+            }
+
+          case Failure(e) =>
+            logger.debug(s"Could not list Parquet checkpoints directory: ${e.getMessage}")
         }
       }
 
