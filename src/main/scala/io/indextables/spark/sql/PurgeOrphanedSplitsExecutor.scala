@@ -794,9 +794,9 @@ class PurgeOrphanedSplitsExecutor(
     logger.info(s"DRY RUN: Would delete $count files ($totalSizeMB MB)")
 
     // Show sample of files that would be deleted
-    println("\n=== DRY RUN: Files that would be deleted ===")
-    println(f"${"Path"}%-100s ${"Size (MB)"}%12s ${"Modified"}%20s")
-    println("-" * 135)
+    logger.info("\n=== DRY RUN: Files that would be deleted ===")
+    logger.info(f"${"Path"}%-100s ${"Size (MB)"}%12s ${"Modified"}%20s")
+    logger.info("-" * 135)
 
     filesToPreview
       .sortBy(-_.size) // Sort by size descending
@@ -804,13 +804,13 @@ class PurgeOrphanedSplitsExecutor(
       .foreach { file =>
         val sizeMB       = file.size / (1024.0 * 1024.0)
         val modifiedDate = new java.util.Date(file.modificationTime)
-        println(f"${file.path}%-100s $sizeMB%12.2f $modifiedDate%20s")
+        logger.info(f"${file.path}%-100s $sizeMB%12.2f $modifiedDate%20s")
       }
 
     if (filesToPreview.length > 20) {
-      println(s"... and ${filesToPreview.length - 20} more files")
+      logger.info(s"... and ${filesToPreview.length - 20} more files")
     }
-    println("=" * 135)
+    logger.info("=" * 135)
 
     PurgeResult(
       status = "DRY_RUN",

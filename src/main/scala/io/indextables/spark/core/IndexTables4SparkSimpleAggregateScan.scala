@@ -813,11 +813,9 @@ class IndexTables4SparkSimpleAggregateReader(
     } catch {
       case e: Exception =>
         logger.error(
-          s"SIMPLE AGGREGATE EXECUTION: Failed to execute simple aggregation for split ${partition.split.path}",
+          s"SIMPLE AGGREGATE EXECUTION: Failed to execute simple aggregation for split ${partition.split.path}: ${e.getMessage}",
           e
         )
-        logger.error(s"SIMPLE AGGREGATE EXECUTION: Exception message: ${e.getMessage}")
-        e.printStackTrace()
         Array.empty[InternalRow]
     }
   }

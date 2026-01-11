@@ -1751,11 +1751,10 @@ object MergeSplitsExecutor {
         awsConfig.executeMerge(inputSplitPaths, outputSplitPath, mergeConfig)
       catch {
         case ex: Exception =>
-          println(
-            s"💥 [EXECUTOR] CRITICAL: Direct merge threw exception: ${ex.getClass.getSimpleName}: ${ex.getMessage}"
+          logger.error(
+            s"[EXECUTOR] CRITICAL: Direct merge threw exception: ${ex.getClass.getSimpleName}: ${ex.getMessage}",
+            ex
           )
-          logger.error(s"[EXECUTOR] Direct merge failed", ex)
-          ex.printStackTrace()
           throw new RuntimeException(s"Direct merge operation failed: ${ex.getMessage}", ex)
       }
 
