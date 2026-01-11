@@ -57,6 +57,7 @@ spark.indextables.checkpoint.multipart.enabled: false (default)
 spark.indextables.checkpoint.multipart.maxActionsPerPart: 50000 (default)
 spark.indextables.checkpoint.multipart.parallelWrite: true (default)
 spark.indextables.checkpoint.multipart.parallelWriteTimeoutMinutes: 30 (default, timeout for parallel writes)
+spark.indextables.checkpoint.multipart.parallelWriteThreads: 0 (default: 0 = auto, uses min(numParts, availableProcessors))
 
 // Statistics Truncation (enabled by default)
 spark.indextables.stats.truncation.enabled: true

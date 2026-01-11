@@ -73,6 +73,8 @@ class ParquetCheckpointWriter(
     options.getBoolean("spark.indextables.checkpoint.multipart.parallelWrite", true)
   private val parallelWriteTimeoutMinutes =
     options.getInt("spark.indextables.checkpoint.multipart.parallelWriteTimeoutMinutes", 30)
+  private val parallelWriteThreads =
+    options.getInt("spark.indextables.checkpoint.multipart.parallelWriteThreads", 0)
 
   // Paths
   private val checkpointsDir     = new Path(transactionLogPath, "_checkpoints")
@@ -394,11 +396,16 @@ class ParquetCheckpointWriter(
   ): Seq[Long] = {
     val numParts = partitionedEntries.length
 
+    // Calculate thread pool size based on configuration
+    val poolSize = if (parallelWriteThreads > 0) {
+      math.min(parallelWriteThreads, numParts)
+    } else {
+      math.min(numParts, Runtime.getRuntime.availableProcessors())
+    }
+
     // Use a fixed thread pool for parallel writes
     implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(
-      java.util.concurrent.Executors.newFixedThreadPool(
-        math.min(numParts, Runtime.getRuntime.availableProcessors())
-      )
+      java.util.concurrent.Executors.newFixedThreadPool(poolSize)
     )
 
     try {
@@ -668,6 +675,14 @@ object ParquetCheckpointWriter {
     "spark.indextables.checkpoint.multipart.parallelWriteTimeoutMinutes"
 
   /**
+   * Configuration key for parallel write thread pool size.
+   * When 0, uses auto = min(numParts, availableProcessors).
+   * When > 0, uses the specified value (capped at numParts).
+   */
+  val MULTIPART_PARALLEL_WRITE_THREADS_KEY =
+    "spark.indextables.checkpoint.multipart.parallelWriteThreads"
+
+  /**
    * Default value for multi-part enabled.
    */
   val DEFAULT_MULTIPART_ENABLED = false
@@ -686,6 +701,12 @@ object ParquetCheckpointWriter {
    * Default parallel write timeout in minutes.
    */
   val DEFAULT_PARALLEL_WRITE_TIMEOUT_MINUTES = 30
+
+  /**
+   * Default parallel write thread pool size.
+   * 0 means auto = min(numParts, availableProcessors).
+   */
+  val DEFAULT_PARALLEL_WRITE_THREADS = 0
 
   /**
    * Create a ParquetCheckpointWriter for a transaction log path.
