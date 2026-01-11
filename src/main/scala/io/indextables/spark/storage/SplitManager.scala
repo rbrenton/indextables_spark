@@ -213,20 +213,20 @@ object SplitManager {
           val streamingThreshold = options.getLong("spark.indextables.s3.streamingThreshold", 100L * 1024 * 1024)
 
           if (fileSize > streamingThreshold) {
-            logger.info(s"🚀 Using streaming upload for large split: $outputPath (${fileSize / (1024 * 1024)} MB)")
+            logger.info(s"Using streaming upload for large split: $outputPath (${fileSize / (1024 * 1024)} MB)")
             // Use streaming upload for large files to avoid OOM
             val inputStream = Files.newInputStream(splitFile)
             try {
               cloudProvider.writeFileFromStream(outputPath, inputStream, Some(fileSize))
-              logger.info(s"✅ Streaming upload completed: $outputPath (${fileSize / (1024 * 1024)} MB)")
+              logger.info(s"Streaming upload completed: $outputPath (${fileSize / (1024 * 1024)} MB)")
             } finally
               inputStream.close()
           } else {
-            logger.info(s"📄 Using traditional upload for small split: $outputPath (${fileSize / (1024 * 1024)} MB)")
+            logger.info(s"Using traditional upload for small split: $outputPath (${fileSize / (1024 * 1024)} MB)")
             // Use traditional method for smaller files
             val splitContent = Files.readAllBytes(splitFile)
             cloudProvider.writeFile(outputPath, splitContent)
-            logger.info(s"✅ Split uploaded to cloud storage: $outputPath (${splitContent.length} bytes)")
+            logger.info(s"Split uploaded to cloud storage: $outputPath (${splitContent.length} bytes)")
           }
         } finally
           cloudProvider.close()
@@ -358,7 +358,7 @@ case class SplitCacheConfig(
     val effectiveCachePath = splitCachePath.orElse(SplitCacheConfig.getDefaultCachePath())
     effectiveCachePath.foreach { cachePath =>
       logger.info(
-        s"🔧 Split cache directory configured: $cachePath (Note: GlobalCacheConfig initialization required separately)"
+        s"Split cache directory configured: $cachePath (Note: GlobalCacheConfig initialization required separately)"
       )
       // Note: splitCachePath configuration is handled through GlobalCacheConfig.initialize()
       // before creating any SplitCacheManager instances - this is documented but not implemented
@@ -376,37 +376,37 @@ case class SplitCacheConfig(
     // Configure AWS credentials (access key and secret key with optional session token)
     (awsAccessKey, awsSecretKey) match {
       case (Some(key), Some(secret)) =>
-        logger.info(s"✅ AWS credentials present - configuring tantivy4java")
+        logger.info(s"AWS credentials present - configuring tantivy4java")
         config = awsSessionToken match {
           case Some(token) =>
             logger.info(
-              s"🔧 Calling config.withAwsCredentials(accessKey=${key.take(4)}..., secretKey=***, sessionToken=***)"
+              s"Calling config.withAwsCredentials(accessKey=${key.take(4)}..., secretKey=***, sessionToken=***)"
             )
             val result = config.withAwsCredentials(key, secret, token)
-            logger.info(s"🔧 withAwsCredentials returned: $result")
+            logger.info(s"withAwsCredentials returned: $result")
             result
           case None =>
-            logger.info(s"🔧 Calling config.withAwsCredentials(accessKey=${key.take(4)}..., secretKey=***)")
+            logger.info(s"Calling config.withAwsCredentials(accessKey=${key.take(4)}..., secretKey=***)")
             val result = config.withAwsCredentials(key, secret)
-            logger.info(s"🔧 withAwsCredentials returned: $result")
+            logger.info(s"withAwsCredentials returned: $result")
             result
         }
       case (Some(key), None) =>
         logger.warn(
-          s"⚠️  AWS access key provided but SECRET KEY is missing! accessKey=${key.take(4)}..., secretKey=None"
+          s"AWS access key provided but SECRET KEY is missing! accessKey=${key.take(4)}..., secretKey=None"
         )
       case (None, Some(_)) =>
-        logger.warn(s"⚠️  AWS secret key provided but ACCESS KEY is missing! accessKey=None, secretKey=***")
+        logger.warn(s"AWS secret key provided but ACCESS KEY is missing! accessKey=None, secretKey=***")
       case _ => // No AWS credentials provided
-        logger.debug("🔧 SplitCacheConfig: No AWS credentials provided - using default credentials chain")
+        logger.debug("SplitCacheConfig: No AWS credentials provided - using default credentials chain")
     }
 
     // Configure AWS region separately
     awsRegion match {
       case Some(region) =>
-        logger.info(s"🔧 Calling config.withAwsRegion(region=$region)")
+        logger.info(s"Calling config.withAwsRegion(region=$region)")
         config = config.withAwsRegion(region)
-        logger.info(s"🔧 withAwsRegion returned: $config")
+        logger.info(s"withAwsRegion returned: $config")
       case None =>
         // Only warn about missing AWS region if AWS credentials are configured (or if Azure/GCP are not configured)
         val hasAwsCredentials   = awsAccessKey.isDefined || awsSecretKey.isDefined
@@ -414,18 +414,18 @@ case class SplitCacheConfig(
         val hasGcpCredentials   = gcpProjectId.isDefined || gcpServiceAccountKey.isDefined
 
         if (hasAwsCredentials && !hasAzureCredentials && !hasGcpCredentials) {
-          logger.warn(s"⚠️  AWS region not provided - this may cause 'A region must be set when sending requests to S3' error in tantivy4java")
+          logger.warn(s"AWS region not provided - this may cause 'A region must be set when sending requests to S3' error in tantivy4java")
         } else {
-          logger.debug(s"🔧 AWS region not provided, but using Azure/GCP or no cloud credentials configured")
+          logger.debug(s"AWS region not provided, but using Azure/GCP or no cloud credentials configured")
         }
     }
 
     awsEndpoint.foreach { endpoint =>
-      logger.info(s"🔧 Configuring AWS endpoint: $endpoint")
+      logger.info(s"Configuring AWS endpoint: $endpoint")
       config = config.withAwsEndpoint(endpoint)
     }
     awsPathStyleAccess.foreach { pathStyle =>
-      logger.info(s"🔧 Configuring AWS path-style access: $pathStyle")
+      logger.info(s"Configuring AWS path-style access: $pathStyle")
       config = config.withAwsPathStyleAccess(pathStyle)
     }
 
@@ -444,30 +444,30 @@ case class SplitCacheConfig(
     // Priority 1: Bearer Token (OAuth)
     (azureAccountName, azureBearerToken) match {
       case (Some(name), Some(token)) =>
-        logger.debug(s"✅ Azure OAuth bearer token present - configuring tantivy4java")
-        logger.debug(s"🔧 Calling config.withAzureBearerToken(accountName=$name, bearerToken=***)")
+        logger.debug(s"Azure OAuth bearer token present - configuring tantivy4java")
+        logger.debug(s"Calling config.withAzureBearerToken(accountName=$name, bearerToken=***)")
         config = config.withAzureBearerToken(name, token)
-        logger.debug(s"🔧 withAzureBearerToken returned: $config")
+        logger.debug(s"withAzureBearerToken returned: $config")
       case (Some(name), None) =>
         // Priority 2: Account Key
         azureAccountKey match {
           case Some(key) =>
-            logger.debug(s"✅ Azure account key present - configuring tantivy4java")
-            logger.debug(s"🔧 Calling config.withAzureCredentials(accountName=$name, accountKey=***)")
+            logger.debug(s"Azure account key present - configuring tantivy4java")
+            logger.debug(s"Calling config.withAzureCredentials(accountName=$name, accountKey=***)")
             config = config.withAzureCredentials(name, key)
-            logger.debug(s"🔧 withAzureCredentials returned: $config")
+            logger.debug(s"withAzureCredentials returned: $config")
           case None =>
-            logger.warn(s"⚠️  Azure account name provided but neither bearer token nor account key is present")
+            logger.warn(s"Azure account name provided but neither bearer token nor account key is present")
         }
       case (None, Some(_)) =>
-        logger.warn(s"⚠️  Azure bearer token provided but ACCOUNT NAME is missing!")
+        logger.warn(s"Azure bearer token provided but ACCOUNT NAME is missing!")
       case (None, None) =>
         // Priority 3: Connection String
-        logger.debug(s"⚠️  No Azure account name - checking for connection string")
+        logger.debug(s"No Azure account name - checking for connection string")
         azureConnectionString.foreach { connStr =>
-          logger.debug(s"🔧 Calling config.withAzureConnectionString(connectionString=***)")
+          logger.debug(s"Calling config.withAzureConnectionString(connectionString=***)")
           config = config.withAzureConnectionString(connStr)
-          logger.debug(s"🔧 withAzureConnectionString returned: $config")
+          logger.debug(s"withAzureConnectionString returned: $config")
         }
     }
 
@@ -1232,7 +1232,7 @@ object BatchOptMetricsRegistry {
    */
   def register(tablePath: String, accumulator: BatchOptimizationMetricsAccumulator): Unit = {
     accumulators.put(tablePath, accumulator)
-    logger.debug(s"📊 Registered batch optimization metrics for table: $tablePath")
+    logger.debug(s"Registered batch optimization metrics for table: $tablePath")
   }
 
   /**
@@ -1303,7 +1303,7 @@ object BatchOptMetricsRegistry {
    */
   def clear(tablePath: String): Unit = {
     accumulators.remove(tablePath)
-    logger.debug(s"🧹 Cleared batch optimization metrics for table: $tablePath")
+    logger.debug(s"Cleared batch optimization metrics for table: $tablePath")
   }
 
   /**
@@ -1317,7 +1317,7 @@ object BatchOptMetricsRegistry {
     accumulators.clear()
     baselines.clear()
     if (accCount > 0 || baselineCount > 0) {
-      logger.debug(s"🧹 Cleared all batch optimization metrics ($accCount accumulators, $baselineCount baselines)")
+      logger.debug(s"Cleared all batch optimization metrics ($accCount accumulators, $baselineCount baselines)")
     }
   }
 
@@ -1342,7 +1342,7 @@ object BatchOptMetricsRegistry {
     val baseline = BatchOptMetrics.fromJavaMetrics()
     baselines.put(tablePath, baseline)
     logger.debug(
-      s"📊 Captured baseline metrics for $tablePath: ops=${baseline.totalOperations}, docs=${baseline.totalDocuments}"
+      s"Captured baseline metrics for $tablePath: ops=${baseline.totalOperations}, docs=${baseline.totalDocuments}"
     )
   }
 
@@ -1366,7 +1366,7 @@ object BatchOptMetricsRegistry {
     // Remove baseline after reading to prevent memory leak
     val baseline = Option(baselines.remove(tablePath)).getOrElse {
       logger.warn(
-        s"📊 No baseline captured for $tablePath - returning cumulative metrics. " +
+        s"No baseline captured for $tablePath - returning cumulative metrics. " +
           "Call captureBaseline() before query execution for accurate per-query metrics."
       )
       BatchOptMetrics.empty
@@ -1382,7 +1382,7 @@ object BatchOptMetricsRegistry {
     )
 
     logger.debug(
-      s"📊 Metrics delta for $tablePath: ops=${delta.totalOperations}, docs=${delta.totalDocuments}, " +
+      s"Metrics delta for $tablePath: ops=${delta.totalOperations}, docs=${delta.totalDocuments}, " +
         s"requests=${delta.totalRequests}, consolidated=${delta.consolidatedRequests}"
     )
 

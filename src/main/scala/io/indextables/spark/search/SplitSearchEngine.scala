@@ -59,7 +59,7 @@ class SplitSearchEngine private (
   private val cacheManager = GlobalSplitCacheManager.getInstance(cacheConfig)
 
   // Create the split searcher using the shared cache
-  logger.info(s"🔧 Creating SplitSearchEngine for path: $splitPath")
+  logger.info(s"Creating SplitSearchEngine for path: $splitPath")
 
   // Validate metadata is provided and non-null
   if (metadata == null) {
@@ -107,23 +107,23 @@ class SplitSearchEngine private (
     )
   }
 
-  logger.info(s"✅ Split metadata validation passed for $splitPath:")
+  logger.info(s"Split metadata validation passed for $splitPath:")
   logger.info(s"   Footer offsets: $footerStartOffset - $footerEndOffset")
   logger.info(s"   Hotcache: $hotcacheStartOffset + $hotcacheLength")
   logger.info(s"   Document mapping: ${metadata.getDocMappingJson().length} chars")
 
   protected lazy val splitSearcher =
     try {
-      logger.info(s"📋 Using metadata for $splitPath with footer offsets: ${metadata.hasFooterOffsets()}")
+      logger.info(s"Using metadata for $splitPath with footer offsets: ${metadata.hasFooterOffsets()}")
       cacheManager.createSplitSearcher(splitPath, metadata)
     } catch {
       case ex: RuntimeException if ex.getMessage.contains("region must be set") =>
-        logger.error(s"❌ CONFIRMED: tantivy4java region error when creating SplitSearcher for $splitPath")
-        logger.error(s"❌ This proves the AWS region is not being passed to tantivy4java properly!")
-        logger.error(s"❌ cacheConfig had: awsRegion=${cacheConfig.awsRegion.getOrElse("None")}, awsEndpoint=${cacheConfig.awsEndpoint.getOrElse("None")}")
+        logger.error(s"CONFIRMED: tantivy4java region error when creating SplitSearcher for $splitPath")
+        logger.error(s"This proves the AWS region is not being passed to tantivy4java properly!")
+        logger.error(s"cacheConfig had: awsRegion=${cacheConfig.awsRegion.getOrElse("None")}, awsEndpoint=${cacheConfig.awsEndpoint.getOrElse("None")}")
         throw ex
       case ex: Exception =>
-        logger.error(s"❌ Failed to create SplitSearcher for $splitPath: ${ex.getMessage}")
+        logger.error(s"Failed to create SplitSearcher for $splitPath: ${ex.getMessage}")
         throw ex
     }
 
@@ -426,10 +426,10 @@ object SplitSearchEngine {
   ): SplitSearchEngine = {
 
     if (metadata != null && metadata.hasFooterOffsets()) {
-      logger.info(s"🚀 OPTIMIZED LOADING: Creating SplitSearchEngine with footer offset optimization: $splitPath")
+      logger.info(s"OPTIMIZED LOADING: Creating SplitSearchEngine with footer offset optimization: $splitPath")
       logger.debug(s"   Footer optimization saves ~87% network traffic during initialization")
     } else {
-      logger.info(s"📁 STANDARD LOADING: Creating SplitSearchEngine without optimization metadata: $splitPath")
+      logger.info(s"STANDARD LOADING: Creating SplitSearchEngine without optimization metadata: $splitPath")
     }
 
     new SplitSearchEngine(sparkSchema, splitPath, metadata, cacheConfig, options)

@@ -130,10 +130,10 @@ class S3CloudStorageProvider(
     // Configure region
     config.awsRegion match {
       case Some(region) =>
-        logger.info(s"🔧 S3Client: Setting region to $region")
+        logger.info(s"S3Client: Setting region to $region")
         builder.region(Region.of(region))
       case None =>
-        logger.warn(s"⚠️ S3Client: No region configured, this will cause errors!")
+        logger.warn(s"S3Client: No region configured, this will cause errors!")
     }
 
     // Configure endpoint (for testing with S3Mock, MinIO, etc.)
@@ -143,7 +143,7 @@ class S3CloudStorageProvider(
       val isStandardAwsEndpoint = endpoint.contains("s3.amazonaws.com") || endpoint.contains("amazonaws.com")
 
       if (isStandardAwsEndpoint && config.awsRegion.isDefined) {
-        logger.info(s"🔧 Skipping endpoint override for standard AWS endpoint '$endpoint' because region is configured: ${config.awsRegion.get}")
+        logger.info(s"Skipping endpoint override for standard AWS endpoint '$endpoint' because region is configured: ${config.awsRegion.get}")
       } else {
         try {
           // Ensure the endpoint has a proper scheme (http:// or https://)
@@ -242,7 +242,7 @@ class S3CloudStorageProvider(
 
     // Configure region (same as sync client)
     config.awsRegion.foreach { region =>
-      logger.info(s"🔧 S3AsyncClient: Setting region to $region")
+      logger.info(s"S3AsyncClient: Setting region to $region")
       builder.region(Region.of(region))
     }
 
@@ -349,7 +349,7 @@ class S3CloudStorageProvider(
       }
 
     try {
-      logger.info(s"S3 LIST DEBUG - Listing S3 files: bucket=$bucket, prefix=$prefix (original: $originalPrefix), recursive=$recursive, isS3Mock=$isS3Mock")
+      logger.debug(s"S3 LIST DEBUG - Listing S3 files: bucket=$bucket, prefix=$prefix (original: $originalPrefix), recursive=$recursive, isS3Mock=$isS3Mock")
       val request = ListObjectsV2Request
         .builder()
         .bucket(bucket)
@@ -545,23 +545,23 @@ class S3CloudStorageProvider(
     val contentLength = content.length.toLong
 
     try {
-      logger.info(s"🔧 S3 WRITE DEBUG - Path: $path")
-      logger.info(s"🔧 S3 WRITE DEBUG - Bucket: '$bucket', Key: '$key' (original: '$originalKey')")
-      logger.info(s"🔧 S3 WRITE DEBUG - Content length: ${formatBytes(contentLength)}")
-      logger.info(s"🔧 S3 WRITE DEBUG - S3Mock mode: $isS3Mock")
+      logger.debug(s"S3 WRITE DEBUG - Path: $path")
+      logger.debug(s"S3 WRITE DEBUG - Bucket: '$bucket', Key: '$key' (original: '$originalKey')")
+      logger.debug(s"S3 WRITE DEBUG - Content length: ${formatBytes(contentLength)}")
+      logger.debug(s"S3 WRITE DEBUG - S3Mock mode: $isS3Mock")
 
       // Ensure bucket exists first
       ensureBucketExists(bucket)
 
       // Use multipart upload for files larger than threshold
       if (contentLength >= multipartThreshold) {
-        logger.info(s"🚀 Using multipart upload for large file: s3://$bucket/$key (${formatBytes(contentLength)})")
+        logger.info(s"Using multipart upload for large file: s3://$bucket/$key (${formatBytes(contentLength)})")
 
         val result = multipartUploader.uploadFile(bucket, key, content)
-        logger.info(s"✅ Multipart upload completed: ${result.strategy}, ${result.partCount} parts, ${result.uploadRateMBps}%.2f MB/s")
+        logger.info(s"Multipart upload completed: ${result.strategy}, ${result.partCount} parts, ${result.uploadRateMBps}%.2f MB/s")
 
       } else {
-        logger.info(s"📄 Using single-part upload for file: s3://$bucket/$key (${formatBytes(contentLength)})")
+        logger.info(s"Using single-part upload for file: s3://$bucket/$key (${formatBytes(contentLength)})")
 
         val request = PutObjectRequest
           .builder()
@@ -573,12 +573,12 @@ class S3CloudStorageProvider(
         val requestBody = RequestBody.fromBytes(content)
         s3Client.putObject(request, requestBody)
 
-        logger.info(s"✅ Successfully wrote S3 file: s3://$bucket/$key")
+        logger.info(s"Successfully wrote S3 file: s3://$bucket/$key")
       }
 
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Failed to write S3 file: s3://$bucket/$key", ex)
+        logger.error(s"Failed to write S3 file: s3://$bucket/$key", ex)
         throw new RuntimeException(s"Failed to write S3 file: ${ex.getMessage}", ex)
     }
   }
@@ -591,10 +591,10 @@ class S3CloudStorageProvider(
     val contentLength = content.length.toLong
 
     try {
-      logger.info(s"🔒 S3 CONDITIONAL WRITE - Path: $path")
-      logger.info(s"🔒 S3 CONDITIONAL WRITE - Bucket: '$bucket', Key: '$key' (original: '$originalKey')")
-      logger.info(s"🔒 S3 CONDITIONAL WRITE - Content length: ${formatBytes(contentLength)}")
-      logger.info(s"🔒 S3 CONDITIONAL WRITE - Using If-None-Match: * for atomic write protection")
+      logger.info(s"S3 CONDITIONAL WRITE - Path: $path")
+      logger.info(s"S3 CONDITIONAL WRITE - Bucket: '$bucket', Key: '$key' (original: '$originalKey')")
+      logger.info(s"S3 CONDITIONAL WRITE - Content length: ${formatBytes(contentLength)}")
+      logger.info(s"S3 CONDITIONAL WRITE - Using If-None-Match: * for atomic write protection")
 
       // Ensure bucket exists first
       ensureBucketExists(bucket)
@@ -607,23 +607,23 @@ class S3CloudStorageProvider(
         .bucket(bucket)
         .key(key)
         .contentLength(contentLength)
-        .ifNoneMatch("*") // ✅ S3 Conditional Writes: Only write if object doesn't exist
+        .ifNoneMatch("*") // S3 Conditional Writes: Only write if object doesn't exist
         .build()
 
       val requestBody = RequestBody.fromBytes(content)
       s3Client.putObject(request, requestBody)
 
-      logger.info(s"✅ Successfully wrote S3 file (conditional): s3://$bucket/$key")
+      logger.info(s"Successfully wrote S3 file (conditional): s3://$bucket/$key")
       true // File was written successfully
 
     } catch {
       case ex: software.amazon.awssdk.services.s3.model.S3Exception if ex.statusCode() == 412 =>
         // 412 Precondition Failed means the file already exists
-        logger.warn(s"⚠️  Conditional write failed - file already exists: s3://$bucket/$key")
+        logger.warn(s"Conditional write failed - file already exists: s3://$bucket/$key")
         false // File already exists, write was NOT performed
 
       case ex: Exception =>
-        logger.error(s"❌ Failed conditional write to S3: s3://$bucket/$key", ex)
+        logger.error(s"Failed conditional write to S3: s3://$bucket/$key", ex)
         throw new RuntimeException(s"Failed conditional write to S3: ${ex.getMessage}", ex)
     }
   }
@@ -637,18 +637,18 @@ class S3CloudStorageProvider(
         .build()
 
       s3Client.headBucket(bucketExistsRequest)
-      logger.debug(s"✅ Bucket exists: $bucket")
+      logger.debug(s"Bucket exists: $bucket")
     } catch {
       case _: software.amazon.awssdk.services.s3.model.NoSuchBucketException =>
-        logger.info(s"🔧 Creating missing bucket: $bucket")
+        logger.info(s"Creating missing bucket: $bucket")
         val createBucketRequest = software.amazon.awssdk.services.s3.model.CreateBucketRequest
           .builder()
           .bucket(bucket)
           .build()
         s3Client.createBucket(createBucketRequest)
-        logger.info(s"✅ Created S3 bucket: $bucket")
+        logger.info(s"Created S3 bucket: $bucket")
       case ex: Exception =>
-        logger.warn(s"⚠️  Could not verify bucket existence for $bucket: ${ex.getMessage}")
+        logger.warn(s"Could not verify bucket existence for $bucket: ${ex.getMessage}")
       // Continue anyway - the putObject call will fail if bucket really doesn't exist
     }
 
@@ -662,22 +662,22 @@ class S3CloudStorageProvider(
     val key = flattenPathForS3Mock(originalKey)
 
     try {
-      logger.info(s"🔧 S3 STREAMING WRITE - Path: $path")
-      logger.info(s"🔧 S3 STREAMING WRITE - Bucket: '$bucket', Key: '$key' (original: '$originalKey')")
-      contentLength.foreach(length => logger.info(s"🔧 S3 STREAMING WRITE - Content length: ${formatBytes(length)}"))
-      logger.info(s"🔧 S3 STREAMING WRITE - S3Mock mode: $isS3Mock")
+      logger.info(s"S3 STREAMING WRITE - Path: $path")
+      logger.info(s"S3 STREAMING WRITE - Bucket: '$bucket', Key: '$key' (original: '$originalKey')")
+      contentLength.foreach(length => logger.info(s"S3 STREAMING WRITE - Content length: ${formatBytes(length)}"))
+      logger.info(s"S3 STREAMING WRITE - S3Mock mode: $isS3Mock")
 
       // Ensure bucket exists first
       ensureBucketExists(bucket)
 
       // Use streaming multipart upload - this is memory efficient for large files
-      logger.info(s"🚀 Using streaming multipart upload for file: s3://$bucket/$key")
+      logger.info(s"Using streaming multipart upload for file: s3://$bucket/$key")
       val result = multipartUploader.uploadStream(bucket, key, inputStream, contentLength)
-      logger.info(s"✅ Streaming upload completed: ${result.strategy}, ${result.partCount} parts, ${result.uploadRateMBps}%.2f MB/s")
+      logger.info(s"Streaming upload completed: ${result.strategy}, ${result.partCount} parts, ${result.uploadRateMBps}%.2f MB/s")
 
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Failed to write S3 file from stream: s3://$bucket/$key", ex)
+        logger.error(s"Failed to write S3 file from stream: s3://$bucket/$key", ex)
         throw new RuntimeException(s"Failed to write S3 file from stream: ${ex.getMessage}", ex)
     }
   }

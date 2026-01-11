@@ -226,7 +226,7 @@ class IndexTables4SparkPartitionReader(
           val queryHash    = generateQueryHash(allFilters)
           val warmupJoined = PreWarmManager.joinWarmupFuture(addAction.path, queryHash, isPreWarmEnabled)
           if (warmupJoined) {
-            logger.info(s"🔥 Successfully joined warmup future for split: ${addAction.path}")
+            logger.info(s"Successfully joined warmup future for split: ${addAction.path}")
           }
         }
 
@@ -848,7 +848,7 @@ class IndexTables4SparkDataWriter(
     if (singleWriter.isDefined) {
       val (searchEngine, statistics, recordCount) = singleWriter.get
       if (recordCount == 0) {
-        logger.info(s"⚠️  Skipping transaction log entry for partition $partitionId - no records written")
+        logger.info(s"Skipping transaction log entry for partition $partitionId - no records written")
         return IndexTables4SparkCommitMessage(Seq.empty)
       }
 
@@ -874,7 +874,7 @@ class IndexTables4SparkDataWriter(
     }
 
     if (allActions.isEmpty) {
-      logger.info(s"⚠️  No records written in partition $partitionId")
+      logger.info(s"No records written in partition $partitionId")
       return IndexTables4SparkCommitMessage(Seq.empty)
     }
 
@@ -1043,7 +1043,7 @@ class IndexTables4SparkDataWriter(
           originalDocMapping
         } else {
           // WORKAROUND: If tantivy4java didn't provide docMappingJson, create a minimal schema mapping
-          logger.warn(s"🔧 WORKAROUND: tantivy4java docMappingJson is missing - creating minimal field mapping")
+          logger.warn(s"WORKAROUND: tantivy4java docMappingJson is missing - creating minimal field mapping")
 
           // Create a minimal field mapping that tantivy4java can understand
           // Based on Quickwit/Tantivy schema format expectations
@@ -1062,7 +1062,7 @@ class IndexTables4SparkDataWriter(
             .mkString(", ")
 
           val minimalSchema = s"""{"fields": {$fieldMappings}}"""
-          logger.warn(s"🔧 Using minimal field mapping as docMappingJson: ${minimalSchema
+          logger.warn(s"Using minimal field mapping as docMappingJson: ${minimalSchema
               .take(200)}${if (minimalSchema.length > 200) "..." else ""}")
 
           Some(minimalSchema)
@@ -1126,19 +1126,19 @@ class IndexTables4SparkDataWriter(
     )
 
     if (partitionValues.nonEmpty) {
-      logger.info(s"📁 Created partitioned split with values: $partitionValues")
+      logger.info(s"Created partitioned split with values: $partitionValues")
     }
 
     // Log footer offset optimization status
     if (hasFooterOffsets) {
-      logger.info(s"🚀 FOOTER OFFSET OPTIMIZATION: Split created with metadata for 87% network traffic reduction")
+      logger.info(s"FOOTER OFFSET OPTIMIZATION: Split created with metadata for 87% network traffic reduction")
       logger.debug(s"   Footer offsets: ${footerStartOffset.get}-${footerEndOffset.get}")
       logger.debug(s"   Hotcache: deprecated (using footer offsets instead)")
     } else {
-      logger.debug(s"📁 STANDARD: Split created without footer offset optimization")
+      logger.debug(s"STANDARD: Split created without footer offset optimization")
     }
 
-    logger.info(s"📝 AddAction created with path: ${addAction.path}")
+    logger.info(s"AddAction created with path: ${addAction.path}")
 
     addAction
   }

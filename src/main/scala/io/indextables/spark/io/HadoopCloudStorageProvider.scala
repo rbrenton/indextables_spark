@@ -179,13 +179,13 @@ class HadoopCloudStorageProvider(hadoopConf: Configuration) extends CloudStorage
 
       // Check if file already exists
       if (fs.exists(hadoopPath)) {
-        logger.warn(s"⚠️  Conditional write failed - file already exists: $path")
+        logger.warn(s"Conditional write failed - file already exists: $path")
         return false // File already exists
       }
 
       // File doesn't exist, create it atomically with overwrite=false
-      logger.info(s"🔒 HADOOP CONDITIONAL WRITE - Path: $path")
-      logger.info(s"🔒 HADOOP CONDITIONAL WRITE - Will only write if file does not exist")
+      logger.info(s"HADOOP CONDITIONAL WRITE - Path: $path")
+      logger.info(s"HADOOP CONDITIONAL WRITE - Will only write if file does not exist")
 
       val output = fs.create(hadoopPath, false) // overwrite=false ensures atomic create
       try
@@ -193,17 +193,17 @@ class HadoopCloudStorageProvider(hadoopConf: Configuration) extends CloudStorage
       finally
         output.close()
 
-      logger.info(s"✅ Successfully wrote file (conditional): $path")
+      logger.info(s"Successfully wrote file (conditional): $path")
       true // File was written successfully
 
     } catch {
       case _: org.apache.hadoop.fs.FileAlreadyExistsException =>
         // Race condition: file was created between exists check and create
-        logger.warn(s"⚠️  Conditional write failed - file created by concurrent writer: $path")
+        logger.warn(s"Conditional write failed - file created by concurrent writer: $path")
         false
 
       case ex: Exception =>
-        logger.error(s"❌ Failed conditional write: $path", ex)
+        logger.error(s"Failed conditional write: $path", ex)
         throw new RuntimeException(s"Failed conditional write: ${ex.getMessage}", ex)
     }
   }
@@ -216,9 +216,9 @@ class HadoopCloudStorageProvider(hadoopConf: Configuration) extends CloudStorage
     val output = createOutputStream(path)
 
     try {
-      logger.info(s"🔧 HADOOP STREAMING WRITE - Path: $path")
+      logger.info(s"HADOOP STREAMING WRITE - Path: $path")
       contentLength.foreach(length =>
-        logger.info(s"🔧 HADOOP STREAMING WRITE - Content length: ${length / (1024 * 1024)} MB")
+        logger.info(s"HADOOP STREAMING WRITE - Content length: ${length / (1024 * 1024)} MB")
       )
 
       // Use a buffer to stream data efficiently without loading everything into memory
@@ -231,7 +231,7 @@ class HadoopCloudStorageProvider(hadoopConf: Configuration) extends CloudStorage
         totalBytesWritten += bytesRead
       }
 
-      logger.info(s"✅ Hadoop streaming write completed: $path (${totalBytesWritten / (1024 * 1024)} MB)")
+      logger.info(s"Hadoop streaming write completed: $path (${totalBytesWritten / (1024 * 1024)} MB)")
     } finally
       output.close()
   }

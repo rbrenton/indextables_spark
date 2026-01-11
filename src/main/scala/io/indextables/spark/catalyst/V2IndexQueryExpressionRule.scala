@@ -78,9 +78,9 @@ object V2IndexQueryExpressionRule extends Rule[LogicalPlan] {
           // Check if condition contains IndexQuery to warn user
           if (containsIndexQueryExpression(condition)) {
             logger.warn(
-              s"⚠️  WARNING: IndexQuery expression detected but rejected because table is not compatible V2 DataSource"
+              s"WARNING: IndexQuery expression detected but rejected because table is not compatible V2 DataSource"
             )
-            logger.warn(s"⚠️  Table class: ${child.table.getClass.getName}, Table name: ${child.table.name()}")
+            logger.warn(s"Table class: ${child.table.getClass.getName}, Table name: ${child.table.name()}")
           }
           filter
         }
@@ -110,9 +110,9 @@ object V2IndexQueryExpressionRule extends Rule[LogicalPlan] {
               logger.debug(s"V2IndexQueryExpressionRule: Not compatible V2 DataSource - REJECTING IndexQuery")
               // Check if condition contains IndexQuery to warn user
               if (containsIndexQueryExpression(condition)) {
-                logger.warn(s"⚠️  WARNING: IndexQuery expression detected but rejected because table is not compatible V2 DataSource")
+                logger.warn(s"WARNING: IndexQuery expression detected but rejected because table is not compatible V2 DataSource")
                 logger.warn(
-                  s"⚠️  Table class: ${v2Relation.table.getClass.getName}, Table name: ${v2Relation.table.name()}"
+                  s"Table class: ${v2Relation.table.getClass.getName}, Table name: ${v2Relation.table.name()}"
                 )
               }
               filter
@@ -145,9 +145,9 @@ object V2IndexQueryExpressionRule extends Rule[LogicalPlan] {
                   logger.debug(s"V2IndexQueryExpressionRule: Not compatible V2 DataSource - REJECTING IndexQuery")
                   // Check if condition contains IndexQuery to warn user
                   if (containsIndexQueryExpression(condition)) {
-                    logger.warn(s"⚠️  WARNING: IndexQuery expression detected but rejected because table is not compatible V2 DataSource")
+                    logger.warn(s"WARNING: IndexQuery expression detected but rejected because table is not compatible V2 DataSource")
                     logger.warn(
-                      s"⚠️  Table class: ${v2Relation.table.getClass.getName}, Table name: ${v2Relation.table.name()}"
+                      s"Table class: ${v2Relation.table.getClass.getName}, Table name: ${v2Relation.table.name()}"
                     )
                   }
                   filter

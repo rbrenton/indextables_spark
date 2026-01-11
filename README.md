@@ -23,7 +23,7 @@ spark = SparkSession.builder \
 # Write data (Make message eligible for full-text search
 #  by declaring it as a "text" type)
 (df.write
-    .format("io.indextables.provider.IndexTablesProvider")
+    .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
     .mode("append")
     .option("spark.indextables.indexing.typemap.message", "text")
     .save("s3://bucket/path/table")
@@ -34,7 +34,7 @@ spark.sql("MERGE SPLITS 's3://bucket/path/table' TARGET SIZE 4G")
 
 # Read data
 df = spark.read \
-    .format("io.indextables.provider.IndexTablesProvider") \
+    .format("io.indextables.spark.core.IndexTables4SparkTableProvider") \
     .load("s3://bucket/path/table")
 
 # Optionally explicitly set your aws credentials
@@ -193,7 +193,7 @@ df.filter((col("name").contains("John")) & (col("age") > 25)).show()
 ### OSS Spark
 
 1. **Install the JAR**: Add the platform-specific [IndexTables JAR](https://repo1.maven.org/maven2/io/indextables/indextables_spark/0.3.4_spark_3.5.3/indextables_spark-0.3.4_spark_3.5.3-linux-x86_64-shaded.jar) to the boot classpath for both executors and driver
-2. **Enable SQL extensions**: Set `spark.sql.extensions=io.indextables.extensions.IndexTablesSparkExtensions`
+2. **Enable SQL extensions**: Set `spark.sql.extensions=io.indextables.spark.extensions.IndexTables4SparkExtensions`
 3. **Configure memory**: Allocate 50% for Spark heap and 50% for native memory overhead (IndexTables runs primarily in native heap)
 4. **Java version**: Requires Java 11 or higher
 
@@ -214,7 +214,7 @@ cp /Workspace/Users/me/indextables_spark-0.3.0_spark_3.5.3-linux-x86_64-shaded.j
 
 ```
 spark.executor.memory=27016m  # Example for r6id.2xlarge: 50% of default memory
-spark.sql.extensions=io.indextables.extensions.IndexTablesSparkExtensions
+spark.sql.extensions=io.indextables.spark.extensions.IndexTables4SparkExtensions
 ```
 
 5. **Upgrade Java (Databricks 15.4)**: Set environment variable `JNAME=zulu17-ca-amd64` to use Java 17
@@ -715,7 +715,7 @@ parquetDF.printSchema()
 
 // Step 3: Convert to IndexTables with appropriate field configurations
 parquetDF.write
-  .format("io.indextables.provider.IndexTablesProvider")
+  .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .mode("overwrite")
   // Configure text fields for full-text search
   .option("spark.indextables.indexing.typemap.message", "text")
@@ -740,7 +740,7 @@ val partitionColumns = Seq("year", "month", "day")
 
 // Convert with partitioning preserved
 deltaDF.write
-  .format("io.indextables.provider.IndexTablesProvider")
+  .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .partitionBy(partitionColumns: _*)
   .option("spark.indextables.indexing.typemap.event_data", "json")
   .option("spark.indextables.indexing.typemap.log_message", "text")
@@ -762,7 +762,7 @@ val jsonDF = spark.read.json("s3://bucket/json-files/*.json")
 // Transform and write to IndexTables
 csvDF.union(jsonDF)
   .write
-  .format("io.indextables.provider.IndexTablesProvider")
+  .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.indexing.typemap.comment", "text")
   .save("s3://bucket/unified-indextable")
 ```
@@ -775,7 +775,7 @@ def migrateTimeRange(startDate: String, endDate: String) = {
     .parquet("s3://bucket/source-data")
     .filter($"date" >= startDate && $"date" < endDate)
     .write
-    .format("io.indextables.provider.IndexTablesProvider")
+    .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
     .mode("append")
     .option("spark.indextables.indexing.typemap.message", "text")
     .save("s3://bucket/indextable-data")
@@ -816,7 +816,7 @@ spark.sql("""
 
 #### 🔍 **DO: Choose Field Types Wisely**
 ```scala
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   // Use 'text' for fields requiring full-text search
   .option("spark.indextables.indexing.typemap.message", "text")
   .option("spark.indextables.indexing.typemap.description", "text")
@@ -838,7 +838,7 @@ spark.conf.set("spark.executor.memoryOverhead", "8g")
 #### 📅 **DO: Partition Time-Series Data**
 ```scala
 // Partition by time for efficient pruning
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .partitionBy("year", "month", "day")
   .save(path)
 ```
@@ -869,11 +869,11 @@ spark.conf.set("spark.executor.memoryOverhead", "8g")
 #### 🚫 **DON'T: Forget to Merge Splits**
 ```scala
 // BAD: Writing data without optimization
-df.write.format("io.indextables.provider.IndexTablesProvider").save(path)
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider").save(path)
 // Forgetting to merge...
 
 // GOOD: Always merge after large ingestions
-df.write.format("io.indextables.provider.IndexTablesProvider").save(path)
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider").save(path)
 spark.sql(s"MERGE SPLITS '$path' TARGET SIZE 4G")
 ```
 
@@ -982,11 +982,11 @@ val data = Seq(
 val df = spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
 
 // Write with automatic JSON field detection - no configuration needed!
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("s3://bucket/nested-data")
 
 // Read nested data
-val readDf = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val readDf = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("s3://bucket/nested-data")
 
 // Access nested fields using dot notation
@@ -1033,11 +1033,11 @@ val data = Seq(
 )
 
 val df = spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("s3://bucket/deeply-nested")
 
 // Access deeply nested fields
-val readDf = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val readDf = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("s3://bucket/deeply-nested")
 
 readDf.select($"id", $"user.name", $"user.address.city").show()
@@ -1053,12 +1053,12 @@ readDf.select($"id", $"user.name", $"user.address.city").show()
 
 ```scala
 // JSON fields + partitioning
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .partitionBy("date", "hour")
   .save("s3://bucket/partitioned-nested")
 
 // JSON fields + text search
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.indexing.typemap.content", "text")
   .save("s3://bucket/searchable-nested")
 
@@ -1076,7 +1076,7 @@ readDf.filter($"content" indexquery "machine learning")
 Filters on nested fields are **automatically pushed down** to tantivy for high-performance execution:
 
 ```scala
-val df = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val df = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("s3://bucket/users")
 
 // All these filters are AUTOMATICALLY pushed down to tantivy!
@@ -1118,7 +1118,7 @@ val nestedSchema = StructType(Seq(
 ))
 
 // Write nested data - automatic JSON field detection!
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("s3://bucket/nested-users")
 ```
 
@@ -1141,22 +1141,22 @@ df.write.format("io.indextables.provider.IndexTablesProvider")
 
 ```scala
 // Default behavior (full mode with all features)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("s3://bucket/data")
 
 // Explicit full mode (range queries and aggregations enabled)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.indexing.json.mode", "full")
   .save("s3://bucket/data")
 
 // Minimal mode (smaller index, no range queries/aggregations)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.indexing.json.mode", "minimal")
   .save("s3://bucket/text-search-only")
 
 // Session-level configuration
 spark.conf.set("spark.indextables.indexing.json.mode", "full")
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("s3://bucket/data")
 ```
 
@@ -1467,7 +1467,7 @@ Configure AWS credentials for S3 operations:
 spark.conf.set("spark.indextables.aws.credentialsProviderClass",
   "io.indextables.spark.auth.unity.UnityCredentialProvider")
 
-df.write.format("io.indextables.provider.IndexTablesProvider").save("s3://bucket/path")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider").save("s3://bucket/path")
 
 // Alternative: Explicit AWS credentials
 spark.conf.set("spark.indextables.aws.accessKey", "your-access-key")
@@ -1484,7 +1484,7 @@ spark.conf.set("spark.indextables.aws.region", "us-west-2")
 spark.conf.set("spark.indextables.aws.endpoint", "https://s3.custom-provider.com")
 
 // Pass credentials via write options (automatically propagated to executors)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.aws.accessKey", "your-access-key")
   .option("spark.indextables.aws.secretKey", "your-secret-key")
   .option("spark.indextables.aws.sessionToken", "your-session-token")
@@ -1527,21 +1527,21 @@ spark.conf.set("spark.indextables.azure.accountName", "mystorageaccount")
 spark.conf.set("spark.indextables.azure.accountKey", "your-account-key")
 
 // Write data using abfss:// scheme (recommended - Spark standard for ADLS Gen2)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
 // Read data
-val df = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val df = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
 // Per-operation credentials (override session config)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.azure.accountName", "mystorageaccount")
   .option("spark.indextables.azure.accountKey", "your-account-key")
   .save("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
 // Alternative: abfss:// scheme without full DNS name (simpler URLs)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("abfss://mycontainer/data")
 ```
 
@@ -1555,11 +1555,11 @@ spark.conf.set("spark.indextables.azure.clientId", "your-client-id")
 spark.conf.set("spark.indextables.azure.clientSecret", "your-client-secret")
 
 // Write with OAuth (bearer token automatically acquired from Azure AD)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
 // Read with OAuth
-val df = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val df = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
 // MERGE SPLITS with OAuth authentication
@@ -1582,14 +1582,14 @@ val connectionString = "DefaultEndpointsProtocol=https;AccountName=mystorageacco
 spark.conf.set("spark.indextables.azure.connectionString", connectionString)
 
 // Write and read using connection string
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
-val df = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val df = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
 // Or pass connection string per-operation
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.azure.connectionString", connectionString)
   .save("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 ```
@@ -1614,10 +1614,10 @@ client_secret = your-client-secret
 
 ```scala
 // Credentials automatically loaded from file - no configuration needed!
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 
-val df = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val df = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/data")
 ```
 
@@ -1642,12 +1642,12 @@ spark.conf.set("spark.indextables.azure.tenantId", "your-tenant-id")
 spark.conf.set("spark.indextables.azure.clientId", "your-client-id")
 spark.conf.set("spark.indextables.azure.clientSecret", "your-client-secret")
 
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .partitionBy("date", "hour")
   .save("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/partitioned-data")
 
 // Read with partition pruning
-val df = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val df = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("abfss://mycontainer@mystorageaccount.dfs.core.windows.net/partitioned-data")
 
 df.filter($"date" === "2024-01-01" && $"hour" === 10).show()
@@ -1663,17 +1663,17 @@ spark.conf.set("spark.indextables.azure.accountName", azureAccount)
 spark.conf.set("spark.indextables.azure.accountKey", azureKey)
 
 // Write to S3
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("s3://s3-bucket/data")
 
 // Write same data to Azure (using Spark standard abfss:// scheme)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .save("abfss://azure-container@azureaccount.dfs.core.windows.net/data")
 
 // Read and union from both clouds
-val s3Data = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val s3Data = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("s3://s3-bucket/data")
-val azureData = spark.read.format("io.indextables.provider.IndexTablesProvider")
+val azureData = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .load("abfss://azure-container@azureaccount.dfs.core.windows.net/data")
 
 val combinedDf = s3Data.union(azureData)
@@ -1712,7 +1712,7 @@ spark.conf.set("spark.indextables.indexWriter.tempDirectoryPath", "/fast-ssd/tan
 spark.conf.set("spark.indextables.merge.tempDirectoryPath", "/fast-ssd/merge-temp")
 
 // Configure per DataFrame write (overrides session config)
-df.write.format("io.indextables.provider.IndexTablesProvider")
+df.write.format("io.indextables.spark.core.IndexTables4SparkTableProvider")
   .option("spark.indextables.cache.maxSize", "1000000000") // 1GB cache for this operation
   .option("spark.indextables.cache.directoryPath", "/nvme/cache") // High-performance cache
   .save("s3://bucket/path")
@@ -2065,7 +2065,7 @@ spark.sparkSession.extensions.add("io.indextables.spark.extensions.IndexTables4S
 
 -- Create table/view from IndexTables4Spark data
 CREATE TEMPORARY VIEW my_documents
-USING io.indextables.provider.IndexTablesProvider
+USING io.indextables.spark.core.IndexTables4SparkTableProvider
 OPTIONS (path 's3://bucket/my-data');
 
 -- Basic IndexQuery usage in SQL (field-specific)
@@ -2150,7 +2150,7 @@ spark.sparkSession.extensions.add("io.indextables.spark.extensions.IndexTables4S
 
 -- Create table/view from IndexTables4Spark data
 CREATE TEMPORARY VIEW my_documents
-USING io.indextables.provider.IndexTablesProvider
+USING io.indextables.spark.core.IndexTables4SparkTableProvider
 OPTIONS (path 's3://bucket/my-data');
 
 -- Basic IndexQueryAll usage - searches across ALL fields using virtual _indexall column
@@ -2658,7 +2658,7 @@ A: IndexTables4Spark is optimized for full-text search and analytical queries wi
 A: Yes! IndexTables4Spark can read from and write to any Spark-compatible data source. You can easily migrate data or use it in hybrid architectures.
 
 **Q: What's the relationship between IndexTables4Spark and IndexTables?**
-A: IndexTables is a vendor-neutral alias for IndexTables4Spark. Use `io.indextables.extensions.IndexTablesSparkExtensions` and `io.indextables.provider.IndexTablesProvider` for the same functionality with a generic namespace.
+A: IndexTables is a vendor-neutral alias for IndexTables4Spark. The primary classes are `io.indextables.spark.core.IndexTables4SparkTableProvider` and `io.indextables.spark.extensions.IndexTables4SparkExtensions`. Alternatively, you can use the alias classes `io.indextables.provider.IndexTablesProvider` and `io.indextables.extensions.IndexTablesSparkExtensions` for a generic namespace.
 
 ### Performance Questions
 

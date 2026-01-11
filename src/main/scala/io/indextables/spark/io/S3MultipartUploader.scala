@@ -190,7 +190,7 @@ class S3MultipartUploader(
       val response   = uploadFuture.get()
       val uploadTime = System.currentTimeMillis() - startTime
 
-      logger.info(s"✅ Single-part memory-mapped upload completed: s3://$bucket/$key in ${uploadTime}ms")
+      logger.info(s"Single-part memory-mapped upload completed: s3://$bucket/$key in ${uploadTime}ms")
 
       S3UploadResult(
         bucket = bucket,
@@ -204,7 +204,7 @@ class S3MultipartUploader(
       )
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Single-part memory-mapped upload failed: s3://$bucket/$key", ex)
+        logger.error(s"Single-part memory-mapped upload failed: s3://$bucket/$key", ex)
         throw new RuntimeException(s"Single-part memory-mapped upload failed: ${ex.getMessage}", ex)
     } finally
       if (fileChannel != null) fileChannel.close()
@@ -223,7 +223,7 @@ class S3MultipartUploader(
     val partSize  = calculateOptimalPartSize(fileSize)
     val partCount = ((fileSize + partSize - 1) / partSize).toInt
 
-    logger.info(s"🚀 Starting memory-mapped multipart upload: s3://$bucket/$key")
+    logger.info(s"Starting memory-mapped multipart upload: s3://$bucket/$key")
     logger.info(s"   Total size: ${formatBytes(fileSize)}")
     logger.info(s"   Part size: ${formatBytes(partSize)}")
     logger.info(s"   Part count: $partCount")
@@ -244,7 +244,7 @@ class S3MultipartUploader(
         .build()
 
       uploadId = s3Client.createMultipartUpload(createRequest).uploadId()
-      logger.debug(s"✅ Multipart upload initiated: uploadId=$uploadId")
+      logger.debug(s"Multipart upload initiated: uploadId=$uploadId")
 
       // 2. Upload all parts in parallel using memory-mapped buffers (zero-copy!)
       val etags = uploadMemoryMappedPartsInParallel(
@@ -274,7 +274,7 @@ class S3MultipartUploader(
       val completeResponse = s3Client.completeMultipartUpload(completeRequest)
       val uploadTime       = System.currentTimeMillis() - startTime
 
-      logger.info(s"✅ Memory-mapped multipart upload completed: s3://$bucket/$key")
+      logger.info(s"Memory-mapped multipart upload completed: s3://$bucket/$key")
       logger.info(s"   Upload time: ${uploadTime}ms")
       logger.info(s"   Upload rate: ${formatBytes((fileSize.toDouble / (uploadTime / 1000.0)).toLong)}/s")
 
@@ -300,14 +300,14 @@ class S3MultipartUploader(
               .uploadId(uploadId)
               .build()
             s3Client.abortMultipartUpload(abortRequest)
-            logger.info(s"⚠️ Multipart upload aborted: uploadId=$uploadId")
+            logger.info(s"Multipart upload aborted: uploadId=$uploadId")
           } catch {
             case abortEx: Exception =>
-              logger.error(s"❌ Failed to abort multipart upload: uploadId=$uploadId", abortEx)
+              logger.error(s"Failed to abort multipart upload: uploadId=$uploadId", abortEx)
           }
         }
 
-        logger.error(s"❌ Memory-mapped multipart upload failed: s3://$bucket/$key", ex)
+        logger.error(s"Memory-mapped multipart upload failed: s3://$bucket/$key", ex)
         throw new RuntimeException(s"Memory-mapped multipart upload failed: ${ex.getMessage}", ex)
     } finally
       if (fileChannel != null) fileChannel.close()
@@ -346,7 +346,7 @@ class S3MultipartUploader(
       futures.map(_.get())
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Memory-mapped parallel upload failed for s3://$bucket/$key", ex)
+        logger.error(s"Memory-mapped parallel upload failed for s3://$bucket/$key", ex)
         throw new RuntimeException(s"Memory-mapped parallel upload failed: ${ex.getMessage}", ex)
     }
   }
@@ -392,7 +392,7 @@ class S3MultipartUploader(
               if (attemptNum < config.maxRetries) {
                 val delay = config.baseRetryDelay * math.pow(2, attemptNum - 1).toLong
                 logger.warn(
-                  s"⚠️ Part $partNumber memory-mapped upload failed (attempt $attemptNum/${config.maxRetries}), retrying in ${delay}ms",
+                  s"Part $partNumber memory-mapped upload failed (attempt $attemptNum/${config.maxRetries}), retrying in ${delay}ms",
                   ex
                 )
 
@@ -434,7 +434,7 @@ class S3MultipartUploader(
               // Success!
               val partTime = System.currentTimeMillis() - startTime
               logger.debug(
-                s"✅ Part $partNumber uploaded (EVENT-BASED ASYNC ZERO-COPY): ${formatBytes(partSize)} in ${partTime}ms"
+                s"Part $partNumber uploaded (EVENT-BASED ASYNC ZERO-COPY): ${formatBytes(partSize)} in ${partTime}ms"
               )
               resultFuture.complete(response.eTag())
             }
@@ -467,7 +467,7 @@ class S3MultipartUploader(
       val response   = s3Client.putObject(request, RequestBody.fromBytes(content))
       val uploadTime = System.currentTimeMillis() - startTime
 
-      logger.info(s"✅ Single-part upload completed: s3://$bucket/$key in ${uploadTime}ms")
+      logger.info(s"Single-part upload completed: s3://$bucket/$key in ${uploadTime}ms")
 
       S3UploadResult(
         bucket = bucket,
@@ -481,7 +481,7 @@ class S3MultipartUploader(
       )
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Single-part upload failed: s3://$bucket/$key", ex)
+        logger.error(s"Single-part upload failed: s3://$bucket/$key", ex)
         throw new RuntimeException(s"Single-part upload failed: ${ex.getMessage}", ex)
     }
   }
@@ -499,7 +499,7 @@ class S3MultipartUploader(
     val partSize  = calculateOptimalPartSize(contentLength)
     val partCount = ((contentLength + partSize - 1) / partSize).toInt
 
-    logger.info(s"🚀 Starting multipart upload: s3://$bucket/$key")
+    logger.info(s"Starting multipart upload: s3://$bucket/$key")
     logger.info(s"   Total size: ${formatBytes(contentLength)}")
     logger.info(s"   Part size: ${formatBytes(partSize)}")
     logger.info(s"   Part count: $partCount")
@@ -518,7 +518,7 @@ class S3MultipartUploader(
       val createResponse = s3Client.createMultipartUpload(createRequest)
       uploadId = createResponse.uploadId()
 
-      logger.info(s"📝 Initiated multipart upload with ID: $uploadId")
+      logger.info(s"Initiated multipart upload with ID: $uploadId")
 
       // 2. Upload parts in parallel
       val uploadedParts = uploadPartsInParallel(bucket, key, uploadId, content, partSize, partCount)
@@ -547,7 +547,7 @@ class S3MultipartUploader(
       val completeResponse = s3Client.completeMultipartUpload(completeRequest)
       val uploadTime       = System.currentTimeMillis() - startTime
 
-      logger.info(s"✅ Multipart upload completed: s3://$bucket/$key in ${uploadTime}ms")
+      logger.info(s"Multipart upload completed: s3://$bucket/$key in ${uploadTime}ms")
       logger.info(s"   Final ETag: ${completeResponse.eTag()}")
       logger.info(s"   Upload rate: ${formatBytes((contentLength * 1000) / uploadTime)}/s")
 
@@ -564,7 +564,7 @@ class S3MultipartUploader(
 
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Multipart upload failed: s3://$bucket/$key", ex)
+        logger.error(s"Multipart upload failed: s3://$bucket/$key", ex)
 
         // Clean up failed upload
         if (uploadId != null) {
@@ -576,7 +576,7 @@ class S3MultipartUploader(
               .uploadId(uploadId)
               .build()
             s3Client.abortMultipartUpload(abortRequest)
-            logger.info(s"🧹 Aborted failed multipart upload: $uploadId")
+            logger.info(s"Aborted failed multipart upload: $uploadId")
           } catch {
             case abortEx: Exception =>
               logger.warn(s"Failed to abort multipart upload $uploadId", abortEx)
@@ -619,7 +619,7 @@ class S3MultipartUploader(
       futures.map(_.get())
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Parallel upload failed for s3://$bucket/$key", ex)
+        logger.error(s"Parallel upload failed for s3://$bucket/$key", ex)
         throw new RuntimeException(s"Parallel upload failed: ${ex.getMessage}", ex)
     }
   }
@@ -660,7 +660,7 @@ class S3MultipartUploader(
         val response = future.get()
         val partTime = System.currentTimeMillis() - partStartTime
 
-        logger.debug(s"✅ Part $partNumber uploaded (ASYNC): ${formatBytes(partData.length)} in ${partTime}ms")
+        logger.debug(s"Part $partNumber uploaded (ASYNC): ${formatBytes(partData.length)} in ${partTime}ms")
         return response.eTag()
 
       } catch {
@@ -671,7 +671,7 @@ class S3MultipartUploader(
           if (attempt < config.maxRetries) {
             val delay = config.baseRetryDelay * math.pow(2, attempt - 1).toLong
             logger.warn(
-              s"⚠️ Part $partNumber async upload failed (attempt $attempt/${config.maxRetries}), retrying in ${delay}ms",
+              s"Part $partNumber async upload failed (attempt $attempt/${config.maxRetries}), retrying in ${delay}ms",
               ex
             )
 
@@ -730,7 +730,7 @@ class S3MultipartUploader(
               if (attemptNum < config.maxRetries) {
                 val delay = config.baseRetryDelay * math.pow(2, attemptNum - 1).toLong
                 logger.warn(
-                  s"⚠️ Part $partNumber async upload failed (attempt $attemptNum/${config.maxRetries}), retrying in ${delay}ms",
+                  s"Part $partNumber async upload failed (attempt $attemptNum/${config.maxRetries}), retrying in ${delay}ms",
                   ex
                 )
 
@@ -772,7 +772,7 @@ class S3MultipartUploader(
               // Success!
               val partTime = System.currentTimeMillis() - startTime
               logger.debug(
-                s"✅ Part $partNumber uploaded (EVENT-BASED ASYNC): ${formatBytes(partData.length)} in ${partTime}ms"
+                s"Part $partNumber uploaded (EVENT-BASED ASYNC): ${formatBytes(partData.length)} in ${partTime}ms"
               )
               resultFuture.complete(response.eTag())
             }
@@ -805,7 +805,7 @@ class S3MultipartUploader(
 
     val startTime = System.currentTimeMillis()
 
-    logger.info(s"🚀 Starting parallel multipart upload from stream: s3://$bucket/$key")
+    logger.info(s"Starting parallel multipart upload from stream: s3://$bucket/$key")
     logger.info(s"   Part size: ${formatBytes(config.partSize)}")
     logger.info(s"   Max concurrency: ${config.maxConcurrency}")
     logger.info(s"   Max queue size: ${config.maxQueueSize}")
@@ -825,7 +825,7 @@ class S3MultipartUploader(
       val createResponse = s3Client.createMultipartUpload(createRequest)
       uploadId = createResponse.uploadId()
 
-      logger.info(s"📝 Initiated streaming multipart upload with ID: $uploadId")
+      logger.info(s"Initiated streaming multipart upload with ID: $uploadId")
 
       // 2. Use bounded queue for producer-consumer pattern
       val partQueue =
@@ -850,18 +850,18 @@ class S3MultipartUploader(
                 // This blocks if queue is full - natural backpressure
                 partQueue.put((partNumber, partData, bytesRead))
 
-                logger.debug(s"📥 Queued part $partNumber: ${formatBytes(partData.length)}")
+                logger.debug(s"Queued part $partNumber: ${formatBytes(partData.length)}")
                 partNumber += 1
               }
 
               // Signal end of stream with sentinel value
               partQueue.put((-1, Array.empty, 0))
-              logger.info(s"✅ Producer finished reading ${partNumber - 1} parts from stream")
+              logger.info(s"Producer finished reading ${partNumber - 1} parts from stream")
 
             } catch {
               case ex: Exception =>
                 producerError.set(ex)
-                logger.error("❌ Producer thread failed", ex)
+                logger.error("Producer thread failed", ex)
                 // Try to signal consumers to stop
                 try partQueue.put((-1, Array.empty, 0))
                 catch { case _: InterruptedException => () }
@@ -886,18 +886,18 @@ class S3MultipartUploader(
                     continue = false
                   } else {
                     // Upload this part using ASYNC S3 client (non-blocking I/O)
-                    logger.debug(s"🔼 Worker $workerId uploading part $partNumber: ${formatBytes(partData.length)}")
+                    logger.debug(s"Worker $workerId uploading part $partNumber: ${formatBytes(partData.length)}")
                     val etag = uploadSinglePartAsync(bucket, key, uploadId, partNumber, partData)
                     uploadedParts.put(partNumber, etag)
                     partSizes.put(partNumber, partSize.toLong)
-                    logger.debug(s"✅ Worker $workerId completed part $partNumber")
+                    logger.debug(s"Worker $workerId completed part $partNumber")
                   }
                 }
-                logger.debug(s"✅ Worker $workerId finished")
+                logger.debug(s"Worker $workerId finished")
               } catch {
                 case ex: Exception =>
                   consumerErrors.add(ex)
-                  logger.error(s"❌ Worker $workerId failed", ex)
+                  logger.error(s"Worker $workerId failed", ex)
               }
           },
           uploadExecutor
@@ -943,7 +943,7 @@ class S3MultipartUploader(
       val completeResponse = s3Client.completeMultipartUpload(completeRequest)
       val uploadTime       = System.currentTimeMillis() - startTime
 
-      logger.info(s"✅ Parallel streaming multipart upload completed: s3://$bucket/$key in ${uploadTime}ms")
+      logger.info(s"Parallel streaming multipart upload completed: s3://$bucket/$key in ${uploadTime}ms")
       logger.info(s"   Parts count: ${uploadedParts.size()}")
       logger.info(s"   Upload rate: ${formatBytes((totalBytesRead * 1000) / uploadTime)}/s")
 
@@ -960,7 +960,7 @@ class S3MultipartUploader(
 
     } catch {
       case ex: Exception =>
-        logger.error(s"❌ Parallel streaming multipart upload failed: s3://$bucket/$key", ex)
+        logger.error(s"Parallel streaming multipart upload failed: s3://$bucket/$key", ex)
 
         // Clean up failed upload
         if (uploadId != null) {
@@ -972,7 +972,7 @@ class S3MultipartUploader(
               .uploadId(uploadId)
               .build()
             s3Client.abortMultipartUpload(abortRequest)
-            logger.info(s"🧹 Aborted failed streaming multipart upload: $uploadId")
+            logger.info(s"Aborted failed streaming multipart upload: $uploadId")
           } catch {
             case abortEx: Exception =>
               logger.warn(s"Failed to abort multipart upload $uploadId", abortEx)

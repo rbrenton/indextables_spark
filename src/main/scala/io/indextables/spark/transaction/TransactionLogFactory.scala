@@ -77,7 +77,7 @@ object TransactionLogFactory {
       new TransactionLogAdapter(new OptimizedTransactionLog(tablePath, spark, options), spark, options)
     } else {
       // Create standard TransactionLog for testing/compatibility
-      logger.info(s"[DEBUG FACTORY] Creating standard TransactionLog for $tablePath")
+      logger.debug(s"[DEBUG FACTORY] Creating standard TransactionLog for $tablePath")
       logger.debug(s" Creating standard TransactionLog for $tablePath")
       new TransactionLog(
         tablePath,

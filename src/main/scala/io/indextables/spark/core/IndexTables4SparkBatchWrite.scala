@@ -120,7 +120,7 @@ class IndexTables4SparkBatchWrite(
     // Log how many empty partitions were filtered out
     val emptyPartitionsCount = messages.length - addActions.length
     if (emptyPartitionsCount > 0) {
-      logger.info(s"⚠️  Filtered out $emptyPartitionsCount empty partitions (0 records) from transaction log")
+      logger.info(s"Filtered out $emptyPartitionsCount empty partitions (0 records) from transaction log")
     }
 
     // Add all files in a single transaction (like Delta Lake)
