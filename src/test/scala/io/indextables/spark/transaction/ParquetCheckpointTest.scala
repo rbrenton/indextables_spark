@@ -1404,49 +1404,12 @@ class ParquetCheckpointTest extends TestBase {
   }
 
   // ==========================================================================
-  // Multi-Part Checkpoint Tests - Round-Robin Distribution
+  // Multi-Part Checkpoint Tests - Streaming Round-Robin Distribution
   // ==========================================================================
 
-  test("distributeEntriesToParts should evenly distribute entries via round-robin") {
-    withTempPath { tempPath =>
-      val transactionLogPath = new Path(tempPath, "_transaction_log")
-      val options = new CaseInsensitiveStringMap(Map.empty[String, String].asJava)
-      val cloudProvider = CloudStorageProviderFactory.createProvider(
-        tempPath,
-        options,
-        spark.sparkContext.hadoopConfiguration
-      )
-
-      try {
-        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
-
-        // Create 10 entries
-        val entries = (1 to 10).map { i =>
-          ParquetCheckpointEntry.fromAction(
-            AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
-          )
-        }
-
-        // Distribute to 3 parts
-        val distributed = writer.distributeEntriesToParts(entries, 3)
-
-        // Part 0: indices 0, 3, 6, 9 -> 4 entries (file1, file4, file7, file10)
-        // Part 1: indices 1, 4, 7 -> 3 entries (file2, file5, file8)
-        // Part 2: indices 2, 5, 8 -> 3 entries (file3, file6, file9)
-        assert(distributed.length === 3)
-        assert(distributed(0).length === 4, "Part 0 should have 4 entries")
-        assert(distributed(1).length === 3, "Part 1 should have 3 entries")
-        assert(distributed(2).length === 3, "Part 2 should have 3 entries")
-
-        // Verify round-robin order
-        assert(distributed(0).head.path.contains("file1"))
-        assert(distributed(1).head.path.contains("file2"))
-        assert(distributed(2).head.path.contains("file3"))
-      } finally {
-        cloudProvider.close()
-      }
-    }
-  }
+  // Note: Round-robin distribution is now computed on-the-fly via streaming methods
+  // (writePartsStreamingSequential and writePartsStreamingParallel) to reduce memory usage.
+  // The distribution logic is tested implicitly through the multi-part checkpoint tests below.
 
   test("multi-part checkpoint should distribute all action types across parts") {
     withTempPath { tempPath =>
