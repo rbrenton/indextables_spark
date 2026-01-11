@@ -499,15 +499,15 @@ class IndexTables4SparkScanBuilder(
     }
 
     logger.debug(s"PUSHFILTERS: Supported=${supported.length}, Unsupported=${unsupported.length}")
-    supported.foreach(filter => logger.debug(s"PUSHFILTERS:   ✓ SUPPORTED: $filter"))
-    unsupported.foreach(filter => logger.debug(s"PUSHFILTERS:   ✗ UNSUPPORTED: $filter"))
+    supported.foreach(filter => logger.debug(s"PUSHFILTERS:   SUPPORTED: $filter"))
+    unsupported.foreach(filter => logger.debug(s"PUSHFILTERS:   UNSUPPORTED: $filter"))
 
     logger.info(s"Filter pushdown summary:")
     logger.info(s"  - ${supported.length} filters FULLY SUPPORTED by data source (will NOT be re-evaluated by Spark)")
-    supported.foreach(filter => logger.info(s"    ✓ PUSHED: $filter"))
+    supported.foreach(filter => logger.info(s"    PUSHED: $filter"))
 
     logger.info(s"  - ${unsupported.length} filters NOT SUPPORTED (will be re-evaluated by Spark after reading)")
-    unsupported.foreach(filter => logger.info(s"    ✗ NOT PUSHED: $filter"))
+    unsupported.foreach(filter => logger.info(s"    NOT PUSHED: $filter"))
 
     // Return only unsupported filters - Spark will re-evaluate these after reading data
     unsupported
@@ -523,10 +523,10 @@ class IndexTables4SparkScanBuilder(
     // Store supported predicates - for now, just log them
     logger.info(s"Predicate pushdown summary:")
     logger.info(s"  - ${supported.length} predicates FULLY SUPPORTED by data source (will NOT be re-evaluated by Spark)")
-    supported.foreach(predicate => logger.info(s"    ✓ PUSHED: $predicate"))
+    supported.foreach(predicate => logger.info(s"    PUSHED: $predicate"))
 
     logger.info(s"  - ${unsupported.length} predicates NOT SUPPORTED (will be re-evaluated by Spark after reading)")
-    unsupported.foreach(predicate => logger.info(s"    ✗ NOT PUSHED: $predicate"))
+    unsupported.foreach(predicate => logger.info(s"    NOT PUSHED: $predicate"))
 
     // Return only unsupported predicates - Spark will re-evaluate these
     unsupported
@@ -585,7 +585,7 @@ class IndexTables4SparkScanBuilder(
         // Store bucket config and accept the aggregation
         _bucketConfig = bucketConfig
         _pushedAggregation = Some(aggregation)
-        logger.info(s"BUCKET AGGREGATION: ✅ ACCEPTED - bucket aggregation will be pushed down")
+        logger.info(s"BUCKET AGGREGATION: ACCEPTED - bucket aggregation will be pushed down")
         return true
       }
 
@@ -635,7 +635,7 @@ class IndexTables4SparkScanBuilder(
 
     // Store for later use in build()
     _pushedAggregation = Some(aggregation)
-    logger.debug(s"AGGREGATE PUSHDOWN: ✅ ACCEPTED - aggregation will be pushed down")
+    logger.debug(s"AGGREGATE PUSHDOWN: ACCEPTED - aggregation will be pushed down")
     logger.debug(s"AGGREGATE PUSHDOWN: Returning true")
     true
   }
@@ -1158,10 +1158,10 @@ class IndexTables4SparkScanBuilder(
       val isParentFast = fastFields.contains(parentField)
 
       if (isFieldFast || isParentFast) {
-        logger.debug(s"FAST FIELD VALIDATION: ✓ Nested field '$fieldName' accepted (field_fast=$isFieldFast, parent_fast=$isParentFast, parent='$parentField')")
+        logger.debug(s"FAST FIELD VALIDATION: Nested field '$fieldName' accepted (field_fast=$isFieldFast, parent_fast=$isParentFast, parent='$parentField')")
         return true
       } else {
-        logger.debug(s"FAST FIELD VALIDATION: ✗ Neither '$fieldName' nor parent '$parentField' marked as fast (available: ${fastFields.mkString(", ")})")
+        logger.debug(s"FAST FIELD VALIDATION: Neither '$fieldName' nor parent '$parentField' marked as fast (available: ${fastFields.mkString(", ")})")
         return false
       }
     }
@@ -1296,7 +1296,7 @@ class IndexTables4SparkScanBuilder(
             logger.debug(s"Field entry: name=${fieldName.getOrElse("N/A")}, fast=$isFast, type=$fieldType")
 
             if (isFast && fieldName.isDefined) {
-              logger.debug(s"✓ Found fast field: ${fieldName.get}")
+              logger.debug(s"Found fast field: ${fieldName.get}")
               Some(fieldName.get)
             } else {
               None

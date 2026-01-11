@@ -254,15 +254,15 @@ object CloudStorageProviderFactory {
                 enriched.set(key, value)
                 val maskedValue = io.indextables.spark.util.CredentialRedaction.redactValue(key, value)
                 logger.debug(s"Copied string Spark config to Hadoop conf: $key = $maskedValue")
-                logger.info(s"✅ Copied string Spark config to Hadoop conf: $key = $maskedValue")
+                logger.info(s"Copied string Spark config to Hadoop conf: $key = $maskedValue")
               } else {
                 // Configuration doesn't exist - this is normal for optional configs like sessionToken
-                logger.debug(s"🔧 Spark config key $key not set (optional)")
+                logger.debug(s"Spark config key $key not set (optional)")
               }
             } catch {
               case ex: Exception =>
                 logger.warn(s"Failed to copy string Spark config key $key: ${ex.getMessage}")
-                logger.info(s"❌ Failed to copy string Spark config key $key: ${ex.getMessage}")
+                logger.info(s"Failed to copy string Spark config key $key: ${ex.getMessage}")
             }
           }
 
@@ -275,15 +275,15 @@ object CloudStorageProviderFactory {
               if (value != defaultValue) {
                 enriched.setBoolean(key, value.toBoolean)
                 logger.debug(s"Copied boolean Spark config to Hadoop conf: $key = $value")
-                logger.info(s"✅ Copied boolean Spark config to Hadoop conf: $key = $value")
+                logger.info(s"Copied boolean Spark config to Hadoop conf: $key = $value")
               } else {
                 // Configuration doesn't exist - this is normal for optional configs
-                logger.debug(s"🔧 Spark config key $key not set (optional)")
+                logger.debug(s"Spark config key $key not set (optional)")
               }
             } catch {
               case ex: Exception =>
                 logger.warn(s"Failed to copy boolean Spark config key $key: ${ex.getMessage}")
-                logger.info(s"❌ Failed to copy boolean Spark config key $key: ${ex.getMessage}")
+                logger.info(s"Failed to copy boolean Spark config key $key: ${ex.getMessage}")
             }
           }
 
@@ -305,19 +305,19 @@ object CloudStorageProviderFactory {
     protocol: ProtocolBasedIOFactory.StorageProtocol
   ): CloudStorageConfig = {
     // Debug logging for configuration extraction
-    logger.info(s"⚙️ EXTRACT CLOUD CONFIG DEBUG - Extracting cloud config from options:")
+    logger.debug(s"EXTRACT CLOUD CONFIG DEBUG - Extracting cloud config from options:")
     options.entrySet().asScala.foreach { entry =>
       val key = entry.getKey.toLowerCase
       val isSensitive = key.contains("secret") || key.contains("sessiontoken") || key.contains("password") || key
         .contains("key") && key.contains("account")
       val displayValue = if (isSensitive) "***[REDACTED]***" else entry.getValue
-      logger.info(s"  ${entry.getKey} = $displayValue")
+      logger.debug(s"  ${entry.getKey} = $displayValue")
     }
-    logger.info(s"⚙️ EXTRACT CLOUD CONFIG DEBUG - Hadoop conf spark.indextables.aws.accessKey: ${Option(
+    logger.debug(s"EXTRACT CLOUD CONFIG DEBUG - Hadoop conf spark.indextables.aws.accessKey: ${Option(
         hadoopConf.get("spark.indextables.aws.accessKey")
       ).map(_.take(4) + "...").getOrElse("None")}")
-    logger.info(s"⚙️ EXTRACT CLOUD CONFIG DEBUG - Hadoop conf spark.indextables.aws.region: ${hadoopConf.get("spark.indextables.aws.region")}")
-    logger.info(s"⚙️ EXTRACT CLOUD CONFIG DEBUG - Hadoop conf spark.hadoop.fs.s3a.access.key: ${Option(
+    logger.debug(s"EXTRACT CLOUD CONFIG DEBUG - Hadoop conf spark.indextables.aws.region: ${hadoopConf.get("spark.indextables.aws.region")}")
+    logger.debug(s"EXTRACT CLOUD CONFIG DEBUG - Hadoop conf spark.hadoop.fs.s3a.access.key: ${Option(
         hadoopConf.get("spark.hadoop.fs.s3a.access.key")
       ).map(_.take(4) + "...").getOrElse("None")}")
 

@@ -118,9 +118,9 @@ object TantivyDirectInterface {
     logger.debug(s"AUTO-FAST-FIELD DEBUG: finalFastFields = ${finalFastFields.mkString(", ")}")
 
     if (finalFastFields.nonEmpty) {
-      logger.info(s"🔧 AUTO-FAST-FIELD: No fast fields configured, automatically making fields fast by default: ${finalFastFields.mkString(", ")}")
+      logger.info(s"AUTO-FAST-FIELD: No fast fields configured, automatically making fields fast by default: ${finalFastFields.mkString(", ")}")
       if (currentNonFastFields.nonEmpty) {
-        logger.info(s"🔧 AUTO-FAST-FIELD: Excluding non-fast fields: ${currentNonFastFields.mkString(", ")}")
+        logger.info(s"AUTO-FAST-FIELD: Excluding non-fast fields: ${currentNonFastFields.mkString(", ")}")
       }
 
       // Create new options map with auto-configured fast fields

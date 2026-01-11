@@ -73,7 +73,7 @@ object PreWarmManager {
     }
 
     val startTime = System.currentTimeMillis()
-    logger.info(s"🔥 Starting pre-warm for ${addActions.length} splits")
+    logger.info(s"Starting pre-warm for ${addActions.length} splits")
 
     // Get available hosts and assign splits using driver-based locality
     val availableHosts = DriverSplitLocalityManager.getAvailableHosts(sc)
@@ -83,7 +83,7 @@ object PreWarmManager {
     // Group splits by their assigned hosts for efficient distribution
     val splitsByHost = groupSplitsByAssignedHosts(addActions, assignments)
     logger.info(
-      s"🔥 Pre-warm distribution: ${splitsByHost.size} hosts, ${splitsByHost.map(_._2.size).sum} split assignments"
+      s"Pre-warm distribution: ${splitsByHost.size} hosts, ${splitsByHost.map(_._2.size).sum} split assignments"
     )
 
     // Create a query hash for warmup future identification
@@ -101,7 +101,7 @@ object PreWarmManager {
     )
 
     warmupStats.put(queryHash, stats)
-    logger.info(s"🔥 Pre-warm completed in ${stats.preWarmTimeMs}ms: ${stats.warmupTasksCreated} tasks across ${stats.hostsInvolved} hosts")
+    logger.info(s"Pre-warm completed in ${stats.preWarmTimeMs}ms: ${stats.warmupTasksCreated} tasks across ${stats.hostsInvolved} hosts")
 
     PreWarmResult(
       warmupInitiated = true,
@@ -226,7 +226,7 @@ object PreWarmManager {
     // Check if we're on the expected host - skip prewarm if not
     if (task.hostname != actualHostname) {
       val duration = System.currentTimeMillis() - taskStartTime
-      logger.warn(s"🔥 LOCALITY MISMATCH: Task assigned to '${task.hostname}' but running on '$actualHostname'. Skipping prewarm for ${task.addActions.size} splits.")
+      logger.warn(s"LOCALITY MISMATCH: Task assigned to '${task.hostname}' but running on '$actualHostname'. Skipping prewarm for ${task.addActions.size} splits.")
       return ComponentPrewarmTaskResult(
         hostname = actualHostname,
         assignedHost = task.hostname,
@@ -393,21 +393,21 @@ object PreWarmManager {
     Option(warmupFutures.get(futureKey)) match {
       case Some(warmupFuture) =>
         try {
-          logger.debug(s"🔥 Joining warmup future for split: $splitPath on host: $currentHostname")
+          logger.debug(s"Joining warmup future for split: $splitPath on host: $currentHostname")
           // Wait for warmup to complete with a reasonable timeout
           warmupFuture.get(30, TimeUnit.SECONDS)
-          logger.info(s"🔥 Successfully joined warmup future for split: $splitPath")
+          logger.info(s"Successfully joined warmup future for split: $splitPath")
           true
         } catch {
           case e: Exception =>
-            logger.warn(s"🔥 Failed to join warmup future for split $splitPath: ${e.getMessage}")
+            logger.warn(s"Failed to join warmup future for split $splitPath: ${e.getMessage}")
             false
         } finally
           // Clean up the future to prevent memory leaks
           warmupFutures.remove(futureKey)
       case None =>
         if (isPreWarmEnabled) {
-          logger.warn(s"⚠️  Pre-warm enabled but no warmup future found for split $splitPath on host $currentHostname")
+          logger.warn(s"Pre-warm enabled but no warmup future found for split $splitPath on host $currentHostname")
         }
         false
     }
@@ -436,7 +436,7 @@ object PreWarmManager {
   ): Map[String, Int] = {
 
     if (splitsByHost.isEmpty) {
-      logger.info("🔥 No splits with preferred hosts found, skipping pre-warm task distribution")
+      logger.info("No splits with preferred hosts found, skipping pre-warm task distribution")
       return Map.empty
     }
 
@@ -446,7 +446,7 @@ object PreWarmManager {
         splits.map(addAction => PreWarmTask(addAction, hostname, readSchema, allFilters, queryHash))
     }.toSeq
 
-    logger.info(s"🔥 Distributing ${preWarmTasks.length} pre-warm tasks across ${splitsByHost.size} hosts")
+    logger.info(s"Distributing ${preWarmTasks.length} pre-warm tasks across ${splitsByHost.size} hosts")
 
     // Broadcast config for executor access
     val broadcastConfig = sc.broadcast(config)
@@ -483,7 +483,7 @@ object PreWarmManager {
     // Aggregate results by hostname
     val assignments = taskResults.groupBy(_.hostname).mapValues(_.length).toMap
     logger.info(
-      s"🔥 Pre-warm task distribution completed: ${assignments.map { case (h, c) => s"$h: $c tasks" }.mkString(", ")}"
+      s"Pre-warm task distribution completed: ${assignments.map { case (h, c) => s"$h: $c tasks" }.mkString(", ")}"
     )
 
     assignments
@@ -498,7 +498,7 @@ object PreWarmManager {
 
     // Check if we're on the expected host - skip prewarm if not
     if (task.preferredHostname != actualHostname) {
-      logger.warn(s"🔥 LOCALITY MISMATCH: Task assigned to '${task.preferredHostname}' but running on '$actualHostname'. Skipping prewarm for split: ${task.addAction.path}")
+      logger.warn(s"LOCALITY MISMATCH: Task assigned to '${task.preferredHostname}' but running on '$actualHostname'. Skipping prewarm for split: ${task.addAction.path}")
       return PreWarmTaskResult(
         splitPath = task.addAction.path,
         hostname = actualHostname,
@@ -509,7 +509,7 @@ object PreWarmManager {
       )
     }
 
-    logger.debug(s"🔥 Executing pre-warm task for split: ${task.addAction.path} on host: $actualHostname")
+    logger.debug(s"Executing pre-warm task for split: ${task.addAction.path} on host: $actualHostname")
 
     try {
       // Create cache configuration
@@ -521,7 +521,7 @@ object PreWarmManager {
       // Initiate async warmup using tantivy4java component preloading
       // This is more efficient than query-based warmup and doesn't require any query objects
       val splitSearcher = splitSearchEngine.getSplitSearcher()
-      logger.info(s"🔥 Using component preloading for split warmup: ${task.addAction.path}")
+      logger.info(s"Using component preloading for split warmup: ${task.addAction.path}")
       import io.indextables.tantivy4java.split.SplitSearcher
       val warmupFuture = splitSearcher.preloadComponents(
         SplitSearcher.IndexComponent.POSTINGS,
@@ -537,7 +537,7 @@ object PreWarmManager {
       // Note: Split locality is now tracked on the driver side via DriverSplitLocalityManager
       // No executor-side recording needed - assignments are managed during partition planning
 
-      logger.info(s"🔥 Pre-warm initiated for split: ${task.addAction.path} on host: $actualHostname")
+      logger.info(s"Pre-warm initiated for split: ${task.addAction.path} on host: $actualHostname")
 
       PreWarmTaskResult(
         splitPath = task.addAction.path,
@@ -550,7 +550,7 @@ object PreWarmManager {
 
     } catch {
       case e: Exception =>
-        logger.error(s"🔥 Pre-warm failed for split: ${task.addAction.path} on host: $actualHostname", e)
+        logger.error(s"Pre-warm failed for split: ${task.addAction.path} on host: $actualHostname", e)
         PreWarmTaskResult(
           splitPath = task.addAction.path,
           hostname = actualHostname,

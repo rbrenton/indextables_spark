@@ -254,7 +254,7 @@ object DriverSplitLocalityManager {
       return
     }
 
-    logger.info(s"🔄 Detected ${newHosts.size} new host(s): ${newHosts.mkString(", ")}")
+    logger.info(s"Detected ${newHosts.size} new host(s): ${newHosts.mkString(", ")}")
 
     // Get splits in this query that have assignments to available hosts
     val splitsInQuery = splitPaths.filter { splitPath =>

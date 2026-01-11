@@ -178,9 +178,9 @@ class AzureCloudStorageProvider(
       // Log what we found (without exposing secrets)
       if (accountName.isDefined) {
         if (accountKey.isDefined) {
-          logger.info("✅ Loaded Azure account key credentials from ~/.azure/credentials")
+          logger.info("Loaded Azure account key credentials from ~/.azure/credentials")
         } else if (tenantId.isDefined && clientId.isDefined && clientSecret.isDefined) {
-          logger.info("✅ Loaded Azure Service Principal credentials from ~/.azure/credentials")
+          logger.info("Loaded Azure Service Principal credentials from ~/.azure/credentials")
         } else {
           logger.debug("Azure credentials file found but incomplete")
         }
@@ -212,7 +212,7 @@ class AzureCloudStorageProvider(
 
       val token = credential.getToken(context).block()
       if (token != null) {
-        logger.info(s"✅ OAuth bearer token acquired successfully (expires: ${token.getExpiresAt})")
+        logger.info(s"OAuth bearer token acquired successfully (expires: ${token.getExpiresAt})")
         Some(token.getToken)
       } else {
         logger.error("Failed to acquire OAuth bearer token - token is null")
@@ -650,7 +650,7 @@ class AzureCloudStorageProvider(
     commitMono.block() // Wait for commit to complete
 
     val uploadTime = System.currentTimeMillis() - startTime
-    logger.info(s"✅ Azure parallel ASYNC block upload completed in ${uploadTime}ms")
+    logger.info(s"Azure parallel ASYNC block upload completed in ${uploadTime}ms")
     logger.info(s"   Blocks count: ${blockIds.size()}")
   }
 

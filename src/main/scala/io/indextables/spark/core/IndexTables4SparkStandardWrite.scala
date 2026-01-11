@@ -123,7 +123,6 @@ class IndexTables4SparkStandardWrite(
 
   override def commit(messages: Array[WriterCommitMessage]): Unit = {
     logger.debug(s"DEBUG: Committing ${messages.length} writer messages (overwrite mode: $isOverwrite)")
-    logger.debug(s"DEBUG: Committing ${messages.length} writer messages (overwrite mode: $isOverwrite)")
     logger.debug(s"DEBUG: serializedOptions keys: ${serializedOptions.keys.mkString(", ")}")
     serializedOptions.foreach {
       case (k, v) =>
@@ -144,7 +143,7 @@ class IndexTables4SparkStandardWrite(
     // Log how many empty partitions were filtered out
     val emptyPartitionsCount = messages.length - addActions.size
     if (emptyPartitionsCount > 0) {
-      logger.info(s"⚠️  Filtered out $emptyPartitionsCount empty partitions (0 records) from transaction log")
+      logger.info(s"Filtered out $emptyPartitionsCount empty partitions (0 records) from transaction log")
     }
 
     // Determine if this should be an overwrite based on existing table state and mode
@@ -391,7 +390,7 @@ class IndexTables4SparkStandardWrite(
         return false
       }
 
-      logger.info("🔀 Merge-on-write enabled - evaluating if merge is worthwhile...")
+      logger.info("Merge-on-write enabled - evaluating if merge is worthwhile...")
 
       // Get configuration
       val mergeGroupMultiplier = writeOptions
@@ -418,11 +417,11 @@ class IndexTables4SparkStandardWrite(
       logger.info(s"Found $mergeGroups mergeable groups (threshold: $threshold)")
 
       if (mergeGroups >= threshold) {
-        logger.info(s"✅ Merge worthwhile: $mergeGroups groups ≥ $threshold threshold - executing MERGE SPLITS")
+        logger.info(s"Merge worthwhile: $mergeGroups groups >= $threshold threshold - executing MERGE SPLITS")
         executeMergeSplitsCommand(writeOptions)
         true // Merge was executed
       } else {
-        logger.info(s"⏭️  Merge not worthwhile: $mergeGroups groups < $threshold threshold - skipping")
+        logger.info(s"Merge not worthwhile: $mergeGroups groups < $threshold threshold - skipping")
         false // Merge was not executed
       }
 
@@ -538,10 +537,10 @@ class IndexTables4SparkStandardWrite(
       if (results.nonEmpty) {
         val firstRow = results.head
         logger.info(
-          s"✅ MERGE SPLITS completed: ${firstRow.getString(0)} - merged ${firstRow.getStruct(1).getLong(1)} files"
+          s"MERGE SPLITS completed: ${firstRow.getString(0)} - merged ${firstRow.getStruct(1).getLong(1)} files"
         )
       } else {
-        logger.info(s"✅ MERGE SPLITS completed with no results")
+        logger.info(s"MERGE SPLITS completed with no results")
       }
 
     } catch {
@@ -579,12 +578,12 @@ class IndexTables4SparkStandardWrite(
         return
       }
 
-      logger.info("🧹 Purge-on-write enabled - evaluating if purge should run...")
+      logger.info("Purge-on-write enabled - evaluating if purge should run...")
 
       // Determine if purge should trigger
       val shouldTrigger = if (config.triggerAfterMerge && mergeWasExecuted) {
         // Trigger 1: After merge-on-write completion
-        logger.info("✅ Purge triggered: merge-on-write just completed")
+        logger.info("Purge triggered: merge-on-write just completed")
         true
       } else if (config.triggerAfterWrites > 0) {
         // Trigger 2: After N write transactions
@@ -592,12 +591,12 @@ class IndexTables4SparkStandardWrite(
         logger.debug(s"Transaction count for $tablePath: $txCount (threshold: ${config.triggerAfterWrites})")
 
         if (txCount >= config.triggerAfterWrites) {
-          logger.info(s"✅ Purge triggered: transaction count $txCount ≥ threshold ${config.triggerAfterWrites}")
+          logger.info(s"Purge triggered: transaction count $txCount >= threshold ${config.triggerAfterWrites}")
           // Reset counter after triggering
           PurgeOnWriteTransactionCounter.reset(tablePath.toString)
           true
         } else {
-          logger.info(s"⏭️  Purge not triggered: transaction count $txCount < threshold ${config.triggerAfterWrites}")
+          logger.info(s"Purge not triggered: transaction count $txCount < threshold ${config.triggerAfterWrites}")
           false
         }
       } else {
@@ -677,7 +676,7 @@ class IndexTables4SparkStandardWrite(
       val result = executor.purge()
 
       // Log results
-      logger.info(s"✅ PURGE ORPHANED SPLITS completed:")
+      logger.info(s"PURGE ORPHANED SPLITS completed:")
       logger.info(s"   - Status: ${result.status}")
       logger.info(s"   - Orphaned files found: ${result.orphanedFilesFound}")
       logger.info(s"   - Orphaned files deleted: ${result.orphanedFilesDeleted}")
