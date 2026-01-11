@@ -1383,7 +1383,9 @@ object FiltersToQueryConverter {
             val fieldInfo = schema.getFieldInfo(attribute)
             fieldInfo != null && fieldInfo.isFast()
           } catch {
-            case _: Exception => false
+            case e: Exception =>
+              logger.trace(s"Could not determine fast field status for '$attribute': ${e.getMessage}")
+              false
           }
 
         // Fall back to checking options (for backward compatibility)
@@ -1451,7 +1453,9 @@ object FiltersToQueryConverter {
             val fieldInfo = schema.getFieldInfo(attribute)
             fieldInfo != null && fieldInfo.isFast()
           } catch {
-            case _: Exception => false
+            case e: Exception =>
+              logger.trace(s"Could not determine fast field status for '$attribute': ${e.getMessage}")
+              false
           }
 
         // Fall back to checking options (for backward compatibility)

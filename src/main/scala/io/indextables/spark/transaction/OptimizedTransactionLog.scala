@@ -810,7 +810,9 @@ class OptimizedTransactionLog(
         try
           listFiles()
         catch {
-          case _: Exception => Seq.empty[AddAction]
+          case e: Exception =>
+            logger.trace(s"Could not list files during write-through cache update: ${e.getMessage}")
+            Seq.empty[AddAction]
         }
 
       // Create a checksum for the current file list state
@@ -929,7 +931,8 @@ class OptimizedTransactionLog(
     try
       allActions += getProtocol()
     catch {
-      case _: Exception => // No protocol found, skip
+      case e: Exception =>
+        logger.trace(s"No protocol found during checkpoint creation: ${e.getMessage}")
     }
 
     // Add metadata second
@@ -939,7 +942,9 @@ class OptimizedTransactionLog(
         allActions += md
         Some(md)
       } catch {
-        case _: Exception => None // No metadata found, skip
+        case e: Exception =>
+          logger.trace(s"No metadata found during checkpoint creation: ${e.getMessage}")
+          None
       }
 
     // Apply statistics truncation to add actions before adding to checkpoint

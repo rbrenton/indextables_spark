@@ -24,6 +24,7 @@ import org.apache.spark.sql.connector.read.colstats.ColumnStatistics
 import org.apache.spark.sql.connector.read.Statistics
 
 import io.indextables.spark.transaction.AddAction
+import org.slf4j.LoggerFactory
 
 /**
  * Implementation of Spark's Statistics interface for IndexTables4Spark. Provides table-level statistics including size
@@ -59,6 +60,8 @@ class IndexTables4SparkStatistics(
 }
 
 object IndexTables4SparkStatistics {
+
+  private val logger = LoggerFactory.getLogger(this.getClass)
 
   /** Simple column statistics implementation for basic min/max and null count information. */
   private class SimpleColumnStatistics(
@@ -160,8 +163,8 @@ object IndexTables4SparkStatistics {
           columnStatsBuilder(columnName) = colStats
         }
       } catch {
-        case _: Exception =>
-        // Skip columns that can't be processed (e.g., incomparable types)
+        case e: Exception =>
+          logger.trace(s"Skipping column '$columnName' statistics aggregation: ${e.getMessage}")
       }
     }
 

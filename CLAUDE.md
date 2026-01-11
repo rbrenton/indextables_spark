@@ -790,10 +790,9 @@ spark.conf.set("spark.indextables.checkpoint.parallelism", "8")
 
 ## Test Status
 - ✅ **350+ tests passing**: Complete coverage for all major features
-- ⚠️  **Merge-on-write**: Tests need updating for new post-commit design
-  - Previous shuffle-based implementation removed
-  - New design: post-commit evaluation with MERGE SPLITS invocation
-  - Tests to be updated for new architecture
+- ✅ **Merge-on-write**: 40/40 tests passing (post-commit architecture)
+  - Comprehensive coverage: threshold evaluation, credential handling, S3/Azure integration
+  - Tests properly aligned with post-commit MERGE SPLITS invocation design
 - ✅ **JSON fields**: 114/114 tests passing (99 Struct/Array/Map tests + 15 aggregate/configuration tests)
 - ✅ **JSON configuration**: 6/6 tests passing (json.mode validation)
 - ✅ **JSON aggregates**: 9/9 tests passing (aggregates on nested fields with filter pushdown)
