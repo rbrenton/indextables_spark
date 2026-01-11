@@ -49,7 +49,13 @@ spark.indextables.splitConversion.maxParallelism: <auto> (default: max(1, availa
 // Transaction Log
 spark.indextables.checkpoint.enabled: true
 spark.indextables.checkpoint.interval: 10
+spark.indextables.checkpoint.format: "json" (default) or "parquet" (10-90x faster reads)
 spark.indextables.transaction.compression.enabled: true (default)
+
+// Multi-Part Checkpoints (for very large tables with 50K+ files)
+spark.indextables.checkpoint.multipart.enabled: false (default)
+spark.indextables.checkpoint.multipart.maxActionsPerPart: 50000 (default)
+spark.indextables.checkpoint.multipart.parallelWrite: true (default)
 
 // Statistics Truncation (enabled by default)
 spark.indextables.stats.truncation.enabled: true
