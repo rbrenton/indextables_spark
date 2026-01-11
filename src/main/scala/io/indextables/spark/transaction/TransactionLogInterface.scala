@@ -237,4 +237,23 @@ trait TransactionLogInterface extends AutoCloseable {
   def commitRemoveActions(removeActions: Seq[RemoveAction]): Long =
     // Default implementation can be overridden by subclasses
     throw new UnsupportedOperationException("commitRemoveActions must be implemented by subclass")
+
+  /**
+   * Replaces files matching a partition predicate with new files.
+   *
+   * This operation atomically removes all files matching the predicate and adds the new files in a single transaction.
+   * It is used for selective partition overwrite (replaceWhere) functionality.
+   *
+   * @param addActions
+   *   Sequence of add actions for the new files
+   * @param predicateStr
+   *   The partition predicate string (e.g., "date = '2024-01-01'")
+   * @return
+   *   The transaction version number for this operation
+   * @throws IllegalArgumentException
+   *   if the table is not partitioned or predicate is invalid
+   */
+  def replaceWhere(addActions: Seq[AddAction], predicateStr: String): Long =
+    // Default implementation can be overridden by subclasses
+    throw new UnsupportedOperationException("replaceWhere must be implemented by subclass")
 }
