@@ -427,8 +427,14 @@ class ParquetCheckpointWriter(
         )
     } finally {
       ec match {
-        case es: java.util.concurrent.ExecutorService => es.shutdown()
-        case _                                        => // ignore
+        case es: java.util.concurrent.ExecutorService =>
+          es.shutdown()
+          // Wait up to 10 seconds for tasks to terminate gracefully
+          if (!es.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+            logger.warn(s"Executor did not terminate gracefully, forcing shutdown")
+            es.shutdownNow()
+          }
+        case _ => // ignore
       }
     }
   }
