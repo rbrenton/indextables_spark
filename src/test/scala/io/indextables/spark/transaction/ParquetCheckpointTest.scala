@@ -1236,6 +1236,915 @@ class ParquetCheckpointTest extends TestBase {
     assert(restored.tags === original.tags)
   }
 
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - Basic Writing
+  // ==========================================================================
+
+  test("multi-part checkpoint should create correct number of parts for 250 actions with max 100 per part") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "100"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // Create 250 actions (should split into 3 parts: 100 + 100 + 50 via round-robin)
+        val actions: Seq[Action] = (1 to 250).map { i =>
+          AddAction(
+            path = s"file$i.split",
+            partitionValues = Map("idx" -> i.toString),
+            size = i * 100L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 10L)
+          )
+        }
+
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+        // Verify metadata
+        assert(metadata.version === 1L)
+        assert(metadata.size === 250L)
+        assert(metadata.numFiles === 250L)
+        assert(metadata.parts.contains(3), "Should have 3 parts for 250 actions with max 100 per part")
+        assert(metadata.isMultiPart)
+
+        // Verify all part files exist
+        (0 until 3).foreach { part =>
+          val partPath = writer.getMultiPartCheckpointPath(1L, part)
+          assert(cloudProvider.exists(partPath.toString), s"Part $part file should exist at $partPath")
+        }
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("multi-part checkpoint should create parts with correct file naming format") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "50"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        val actions: Seq[Action] = (1 to 100).map { i =>
+          AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        }
+
+        writer.writeCheckpoint(version = 42L, actions = actions)
+
+        // Verify file naming: _checkpoints/{version:020d}.checkpoint.{part:010d}.parquet
+        val checkpointsDir = new Path(transactionLogPath, "_checkpoints")
+        val expectedPart0 = new Path(checkpointsDir, "00000000000000000042.checkpoint.0000000000.parquet")
+        val expectedPart1 = new Path(checkpointsDir, "00000000000000000042.checkpoint.0000000001.parquet")
+
+        assert(cloudProvider.exists(expectedPart0.toString), s"Part 0 should exist at $expectedPart0")
+        assert(cloudProvider.exists(expectedPart1.toString), s"Part 1 should exist at $expectedPart1")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("multi-part checkpoint metadata should have correct parts count in _last_checkpoint") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "30"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        // 150 actions / 30 per part = 5 parts
+        val actions: Seq[Action] = (1 to 150).map { i =>
+          AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        }
+
+        writer.writeCheckpoint(version = 10L, actions = actions)
+
+        // Verify _last_checkpoint content
+        val infoOpt = reader.getLastCheckpointInfo()
+        assert(infoOpt.isDefined)
+        val info = infoOpt.get
+
+        assert(info.version === 10L)
+        assert(info.size === 150L)
+        assert(info.numFiles === 150L)
+        assert(info.isParquetFormat)
+        assert(info.isMultiPart)
+        assert(info.parts.contains(5), s"Expected 5 parts but got ${info.parts}")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("multi-part checkpoint should correctly calculate total size across all parts") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "50"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        val actions: Seq[Action] = (1 to 100).map { i =>
+          AddAction(s"file$i.split", Map("partition" -> (i % 5).toString), i * 100L, System.currentTimeMillis(), true)
+        }
+
+        val metadata = writer.writeCheckpoint(version = 5L, actions = actions)
+
+        // sizeInBytes should be > 0 and represent total across all parts
+        assert(metadata.sizeInBytes > 0L, "Total size should be greater than 0")
+        assert(metadata.parts.contains(2), "Should have 2 parts")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - Round-Robin Distribution
+  // ==========================================================================
+
+  test("distributeEntriesToParts should evenly distribute entries via round-robin") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map.empty[String, String].asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // Create 10 entries
+        val entries = (1 to 10).map { i =>
+          ParquetCheckpointEntry.fromAction(
+            AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+          )
+        }
+
+        // Distribute to 3 parts
+        val distributed = writer.distributeEntriesToParts(entries, 3)
+
+        // Part 0: indices 0, 3, 6, 9 -> 4 entries (file1, file4, file7, file10)
+        // Part 1: indices 1, 4, 7 -> 3 entries (file2, file5, file8)
+        // Part 2: indices 2, 5, 8 -> 3 entries (file3, file6, file9)
+        assert(distributed.length === 3)
+        assert(distributed(0).length === 4, "Part 0 should have 4 entries")
+        assert(distributed(1).length === 3, "Part 1 should have 3 entries")
+        assert(distributed(2).length === 3, "Part 2 should have 3 entries")
+
+        // Verify round-robin order
+        assert(distributed(0).head.path.contains("file1"))
+        assert(distributed(1).head.path.contains("file2"))
+        assert(distributed(2).head.path.contains("file3"))
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("multi-part checkpoint should distribute all action types across parts") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "5"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        // Create mixed action types
+        val actions: Seq[Action] = Seq(
+          ProtocolAction(1, 2),
+          MetadataAction("id", Some("name"), None, FileFormat("p", Map.empty), "schema", Seq.empty, Map.empty, None)
+        ) ++ (1 to 10).map { i =>
+          AddAction(s"add$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        } ++ Seq(
+          RemoveAction("remove1.split", Some(System.currentTimeMillis()), true, None, None, None),
+          RemoveAction("remove2.split", Some(System.currentTimeMillis()), true, None, None, None)
+        )
+
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+        assert(metadata.parts.isDefined)
+        assert(metadata.parts.get >= 2, "Should have multiple parts")
+
+        // Read back and verify all action types are present
+        val readActionsOpt = reader.readMultiPartCheckpoint(1L, metadata.parts.get)
+        assert(readActionsOpt.isDefined)
+        val readActions = readActionsOpt.get
+
+        assert(readActions.count(_.isInstanceOf[ProtocolAction]) === 1)
+        assert(readActions.count(_.isInstanceOf[MetadataAction]) === 1)
+        assert(readActions.count(_.isInstanceOf[AddAction]) === 10)
+        assert(readActions.count(_.isInstanceOf[RemoveAction]) === 2)
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - Read-Write Round-Trip
+  // ==========================================================================
+
+  test("multi-part checkpoint write then read round-trip preserves all actions") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "25"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        // Create comprehensive test data with 100 actions (4 parts)
+        val protocol = ProtocolAction(2, 3, Some(Set("feature1")), Some(Set("feature2")))
+        val metadata = MetadataAction(
+          id = "test-table-id",
+          name = Some("Multi-Part Test"),
+          description = Some("Testing multi-part checkpoints"),
+          format = FileFormat("indextables", Map("opt1" -> "val1")),
+          schemaString = """{"type":"struct","fields":[]}""",
+          partitionColumns = Seq("date"),
+          configuration = Map("conf1" -> "confVal1"),
+          createdTime = Some(1705312000000L)
+        )
+
+        val addActions = (1 to 90).map { i =>
+          AddAction(
+            path = s"split-$i.split",
+            partitionValues = Map("date" -> s"2024-01-${10 + (i % 20)}"),
+            size = i * 1000L,
+            modificationTime = 1705312000000L + i,
+            dataChange = true,
+            stats = Some(s"""{"numRecords":${i * 10}}"""),
+            numRecords = Some(i * 10L),
+            footerStartOffset = Some(i * 100L),
+            footerEndOffset = Some(i * 1000L),
+            hasFooterOffsets = true
+          )
+        }
+
+        val removeActions = (1 to 8).map { i =>
+          RemoveAction(
+            path = s"removed-$i.split",
+            deletionTimestamp = Some(1705312000000L + i),
+            dataChange = true,
+            extendedFileMetadata = Some(true),
+            partitionValues = Some(Map("date" -> s"2024-01-0$i")),
+            size = Some(i * 500L)
+          )
+        }
+
+        val allActions: Seq[Action] = Seq(protocol, metadata) ++ addActions ++ removeActions
+
+        // Write multi-part checkpoint
+        val writeMetadata = writer.writeCheckpoint(version = 100L, actions = allActions)
+
+        assert(writeMetadata.version === 100L)
+        assert(writeMetadata.size === allActions.length)
+        assert(writeMetadata.numFiles === 90L) // AddActions only
+        assert(writeMetadata.isMultiPart)
+        assert(writeMetadata.parts.contains(4), s"Expected 4 parts but got ${writeMetadata.parts}")
+
+        // Read back using reader
+        val readActionsOpt = reader.readMultiPartCheckpoint(100L, writeMetadata.parts.get)
+        assert(readActionsOpt.isDefined)
+        val readActions = readActionsOpt.get
+
+        // Verify counts
+        assert(readActions.length === allActions.length, "Total action count should match")
+        assert(readActions.count(_.isInstanceOf[ProtocolAction]) === 1)
+        assert(readActions.count(_.isInstanceOf[MetadataAction]) === 1)
+        assert(readActions.count(_.isInstanceOf[AddAction]) === 90)
+        assert(readActions.count(_.isInstanceOf[RemoveAction]) === 8)
+
+        // Verify specific data is preserved
+        val readProtocol = readActions.collectFirst { case p: ProtocolAction => p }.get
+        assert(readProtocol.minReaderVersion === 2)
+        assert(readProtocol.readerFeatures === Some(Set("feature1")))
+
+        val readMeta = readActions.collectFirst { case m: MetadataAction => m }.get
+        assert(readMeta.id === "test-table-id")
+        assert(readMeta.name === Some("Multi-Part Test"))
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("multi-part checkpoint readCheckpointFromInfo correctly handles multi-part flag") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "20"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        val actions: Seq[Action] = (1 to 50).map { i =>
+          AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        }
+
+        writer.writeCheckpoint(version = 5L, actions = actions)
+
+        // Get info and use readCheckpointFromInfo
+        val infoOpt = reader.getLastCheckpointInfo()
+        assert(infoOpt.isDefined)
+        val info = infoOpt.get
+        assert(info.isMultiPart)
+        assert(info.parts.contains(3), s"Expected 3 parts but got ${info.parts}")
+
+        // Read using the info
+        val readActionsOpt = reader.readCheckpointFromInfo(info)
+        assert(readActionsOpt.isDefined)
+        assert(readActionsOpt.get.length === 50)
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - Configuration
+  // ==========================================================================
+
+  test("multipart.enabled=false should create single file even for large action count") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "false",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "50"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // Create 200 actions (would be 4 parts if enabled)
+        val actions: Seq[Action] = (1 to 200).map { i =>
+          AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        }
+
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+        // Should be single-file checkpoint
+        assert(!metadata.isMultiPart, "Should not be multi-part when disabled")
+        assert(metadata.parts.isEmpty, "parts should be None")
+
+        // Verify single file exists (not multi-part)
+        val singleFilePath = writer.getCheckpointPath(1L)
+        assert(cloudProvider.exists(singleFilePath.toString), "Single file checkpoint should exist")
+
+        // Verify multi-part files don't exist
+        val multiPartPath = writer.getMultiPartCheckpointPath(1L, 0)
+        assert(!cloudProvider.exists(multiPartPath.toString), "Multi-part file should not exist")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("different maxActionsPerPart values produce correct part counts") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+
+      // Test with 100 actions
+      val actionCount = 100
+
+      Seq(10, 25, 50, 100, 200).foreach { maxPerPart =>
+        val options = new CaseInsensitiveStringMap(Map(
+          "spark.indextables.checkpoint.multipart.enabled" -> "true",
+          "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> maxPerPart.toString
+        ).asJava)
+        val cloudProvider = CloudStorageProviderFactory.createProvider(
+          tempPath,
+          options,
+          spark.sparkContext.hadoopConfiguration
+        )
+
+        try {
+          val subPath = new Path(tempPath, s"test_$maxPerPart")
+          val txLogPath = new Path(subPath, "_transaction_log")
+          cloudProvider.createDirectory(txLogPath.toString)
+
+          val writer = ParquetCheckpointWriter(txLogPath, cloudProvider, spark, options)
+
+          val actions: Seq[Action] = (1 to actionCount).map { i =>
+            AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+          }
+
+          val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+          val expectedParts = if (actionCount <= maxPerPart) {
+            None // Single file
+          } else {
+            Some(math.max(2, (actionCount + maxPerPart - 1) / maxPerPart))
+          }
+
+          assert(metadata.parts === expectedParts,
+            s"With maxActionsPerPart=$maxPerPart, expected parts=$expectedParts but got ${metadata.parts}")
+        } finally {
+          cloudProvider.close()
+        }
+      }
+    }
+  }
+
+  test("parallel vs sequential write should produce same result") {
+    withTempPath { tempPath =>
+      val actions: Seq[Action] = (1 to 100).map { i =>
+        AddAction(
+          path = s"file$i.split",
+          partitionValues = Map("idx" -> i.toString),
+          size = i * 100L,
+          modificationTime = 1705312000000L + i,
+          dataChange = true,
+          numRecords = Some(i * 10L)
+        )
+      }
+
+      // Write with parallel=true
+      val parallelPath = new Path(tempPath, "parallel")
+      val parallelTxLogPath = new Path(parallelPath, "_transaction_log")
+      val parallelOptions = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "30",
+        "spark.indextables.checkpoint.multipart.parallelWrite" -> "true"
+      ).asJava)
+      val parallelCloudProvider = CloudStorageProviderFactory.createProvider(
+        parallelPath,
+        parallelOptions,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      // Write with parallel=false
+      val sequentialPath = new Path(tempPath, "sequential")
+      val sequentialTxLogPath = new Path(sequentialPath, "_transaction_log")
+      val sequentialOptions = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "30",
+        "spark.indextables.checkpoint.multipart.parallelWrite" -> "false"
+      ).asJava)
+      val sequentialCloudProvider = CloudStorageProviderFactory.createProvider(
+        sequentialPath,
+        sequentialOptions,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        parallelCloudProvider.createDirectory(parallelTxLogPath.toString)
+        sequentialCloudProvider.createDirectory(sequentialTxLogPath.toString)
+
+        val parallelWriter = ParquetCheckpointWriter(parallelTxLogPath, parallelCloudProvider, spark, parallelOptions)
+        val sequentialWriter = ParquetCheckpointWriter(sequentialTxLogPath, sequentialCloudProvider, spark, sequentialOptions)
+
+        val parallelReader = ParquetCheckpointReader(parallelTxLogPath, parallelCloudProvider, spark, parallelOptions)
+        val sequentialReader = ParquetCheckpointReader(sequentialTxLogPath, sequentialCloudProvider, spark, sequentialOptions)
+
+        val parallelMetadata = parallelWriter.writeCheckpoint(version = 1L, actions = actions)
+        val sequentialMetadata = sequentialWriter.writeCheckpoint(version = 1L, actions = actions)
+
+        // Same metadata (except possibly timing-related fields)
+        assert(parallelMetadata.version === sequentialMetadata.version)
+        assert(parallelMetadata.size === sequentialMetadata.size)
+        assert(parallelMetadata.numFiles === sequentialMetadata.numFiles)
+        assert(parallelMetadata.parts === sequentialMetadata.parts)
+
+        // Read back and verify same content
+        val parallelActions = parallelReader.readMultiPartCheckpoint(1L, parallelMetadata.parts.get).get
+        val sequentialActions = sequentialReader.readMultiPartCheckpoint(1L, sequentialMetadata.parts.get).get
+
+        assert(parallelActions.length === sequentialActions.length)
+        assert(parallelActions.length === 100)
+      } finally {
+        parallelCloudProvider.close()
+        sequentialCloudProvider.close()
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - Edge Cases
+  // ==========================================================================
+
+  test("exactly maxActionsPerPart actions should create single file (no split)") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "100"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // Create exactly 100 actions (equal to maxActionsPerPart)
+        val actions: Seq[Action] = (1 to 100).map { i =>
+          AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        }
+
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+        // Should create single file (100 actions is NOT > 100)
+        assert(!metadata.isMultiPart, "Should not be multi-part when exactly at threshold")
+        assert(metadata.parts.isEmpty, "parts should be None for single-file checkpoint")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("maxActionsPerPart + 1 actions should create 2 parts") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "100"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // Create 101 actions (one more than maxActionsPerPart)
+        val actions: Seq[Action] = (1 to 101).map { i =>
+          AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        }
+
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+        // Should create 2 parts (minimum for multi-part)
+        assert(metadata.isMultiPart, "Should be multi-part when over threshold")
+        assert(metadata.parts.contains(2), s"Expected 2 parts but got ${metadata.parts}")
+
+        // Verify both parts exist
+        (0 until 2).foreach { part =>
+          val partPath = writer.getMultiPartCheckpointPath(1L, part)
+          assert(cloudProvider.exists(partPath.toString), s"Part $part should exist")
+        }
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("large checkpoint with many parts handles correctly") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "50"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        // Create 500 actions (should create 10 parts)
+        val actions: Seq[Action] = (1 to 500).map { i =>
+          AddAction(
+            path = s"large-file-$i.split",
+            partitionValues = Map("partition" -> (i % 20).toString),
+            size = i * 100L,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            numRecords = Some(i * 10L)
+          )
+        }
+
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+        assert(metadata.parts.contains(10), s"Expected 10 parts but got ${metadata.parts}")
+        assert(metadata.size === 500L)
+
+        // Verify all 10 parts exist
+        (0 until 10).foreach { part =>
+          val partPath = writer.getMultiPartCheckpointPath(1L, part)
+          assert(cloudProvider.exists(partPath.toString), s"Part $part should exist")
+        }
+
+        // Read back and verify all actions
+        val readActionsOpt = reader.readMultiPartCheckpoint(1L, 10)
+        assert(readActionsOpt.isDefined)
+        assert(readActionsOpt.get.length === 500)
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("empty actions list should create single-file checkpoint") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "50"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        // Empty actions list
+        val actions: Seq[Action] = Seq.empty
+
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+
+        // Should be single-file (no multi-part for empty)
+        assert(!metadata.isMultiPart)
+        assert(metadata.size === 0L)
+        assert(metadata.numFiles === 0L)
+
+        // Verify checkpoint file exists and is readable
+        val readActionsOpt = reader.readParquetCheckpoint(1L)
+        assert(readActionsOpt.isDefined)
+        assert(readActionsOpt.get.isEmpty)
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - Error Handling
+  // ==========================================================================
+
+  test("validateMultiPartCheckpoint should catch entry count mismatch") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.validateOnWrite" -> "true",
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "50"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // Write a valid checkpoint first
+        val actions: Seq[Action] = (1 to 100).map { i =>
+          AddAction(s"file$i.split", Map.empty, i * 100L, System.currentTimeMillis(), true)
+        }
+
+        // This should succeed
+        val metadata = writer.writeCheckpoint(version = 1L, actions = actions)
+        assert(metadata.parts.contains(2))
+
+        // Now try to validate with wrong expected count (this would fail if called directly)
+        val thrown = intercept[IllegalStateException] {
+          writer.validateMultiPartCheckpoint(1L, 2, 999) // Wrong count
+        }
+
+        assert(thrown.getMessage.contains("expected 999 entries but found 100"))
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("validateMultiPartCheckpoint should detect missing part files") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.enabled" -> "true",
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "50"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // Try to validate non-existent parts
+        val thrown = intercept[IllegalStateException] {
+          writer.validateMultiPartCheckpoint(999L, 3, 100) // Version 999 doesn't exist
+        }
+
+        assert(thrown.getMessage.contains("missing parts"))
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - calculateNumParts
+  // ==========================================================================
+
+  test("calculateNumParts should return minimum 2 parts for multi-part checkpoints") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map(
+        "spark.indextables.checkpoint.multipart.maxActionsPerPart" -> "100"
+      ).asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        val writer = ParquetCheckpointWriter(transactionLogPath, cloudProvider, spark, options)
+
+        // 101 actions would naturally calculate to ceil(101/100) = 2, which equals minimum
+        assert(writer.calculateNumParts(101) === 2)
+
+        // 150 actions would naturally calculate to ceil(150/100) = 2, which equals minimum
+        assert(writer.calculateNumParts(150) === 2)
+
+        // 201 actions would calculate to ceil(201/100) = 3
+        assert(writer.calculateNumParts(201) === 3)
+
+        // 500 actions would calculate to ceil(500/100) = 5
+        assert(writer.calculateNumParts(500) === 5)
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Multi-Part Checkpoint Tests - Reader Integration
+  // ==========================================================================
+
+  test("ParquetCheckpointReader should return None for missing multi-part checkpoint") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map.empty[String, String].asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        // Try to read non-existent multi-part checkpoint
+        val result = reader.readMultiPartCheckpoint(999L, 3)
+        assert(result.isEmpty, "Should return None for non-existent multi-part checkpoint")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
+  test("ParquetCheckpointReader.readCheckpointFromInfo returns None for JSON format") {
+    withTempPath { tempPath =>
+      val transactionLogPath = new Path(tempPath, "_transaction_log")
+      val options = new CaseInsensitiveStringMap(Map.empty[String, String].asJava)
+      val cloudProvider = CloudStorageProviderFactory.createProvider(
+        tempPath,
+        options,
+        spark.sparkContext.hadoopConfiguration
+      )
+
+      try {
+        cloudProvider.createDirectory(transactionLogPath.toString)
+
+        val reader = ParquetCheckpointReader(transactionLogPath, cloudProvider, spark, options)
+
+        // Create a JSON format info
+        val jsonInfo = LastCheckpointFileInfo(
+          version = 10L,
+          size = 100L,
+          sizeInBytes = 5000L,
+          numFiles = 80L,
+          createdTime = System.currentTimeMillis(),
+          format = Some("json"),
+          parts = None
+        )
+
+        val result = reader.readCheckpointFromInfo(jsonInfo)
+        assert(result.isEmpty, "Should return None for JSON format checkpoint info")
+      } finally {
+        cloudProvider.close()
+      }
+    }
+  }
+
   test("Large number of actions in single checkpoint") {
     withTempPath { tempPath =>
       val transactionLogPath = new Path(tempPath, "_transaction_log")
