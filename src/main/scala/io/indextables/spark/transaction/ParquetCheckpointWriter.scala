@@ -17,9 +17,11 @@
 
 package io.indextables.spark.transaction
 
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.{Await, ExecutionContext, Future, TimeoutException}
 import scala.concurrent.duration.Duration
 import scala.util.{Failure, Success, Try}
+
+import java.util.concurrent.TimeUnit.MINUTES
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Dataset, Encoders, SparkSession}
@@ -69,6 +71,8 @@ class ParquetCheckpointWriter(
     options.getInt("spark.indextables.checkpoint.multipart.maxActionsPerPart", 50000)
   private val parallelWriteEnabled =
     options.getBoolean("spark.indextables.checkpoint.multipart.parallelWrite", true)
+  private val parallelWriteTimeoutMinutes =
+    options.getInt("spark.indextables.checkpoint.multipart.parallelWriteTimeoutMinutes", 30)
 
   // Paths
   private val checkpointsDir     = new Path(transactionLogPath, "_checkpoints")
@@ -381,15 +385,19 @@ class ParquetCheckpointWriter(
    *   Entries distributed across parts
    * @return
    *   Sequence of sizes for each part
+   * @throws RuntimeException
+   *   if parallel writes exceed the configured timeout
    */
   private def writePartsInParallel(
       version: Long,
       partitionedEntries: Seq[Seq[ParquetCheckpointEntry]]
   ): Seq[Long] = {
+    val numParts = partitionedEntries.length
+
     // Use a fixed thread pool for parallel writes
     implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(
       java.util.concurrent.Executors.newFixedThreadPool(
-        math.min(partitionedEntries.length, Runtime.getRuntime.availableProcessors())
+        math.min(numParts, Runtime.getRuntime.availableProcessors())
       )
     )
 
@@ -400,9 +408,23 @@ class ParquetCheckpointWriter(
         }
       }
 
-      // Wait for all writes to complete
+      // Wait for all writes to complete with configurable timeout
       val combinedFuture = Future.sequence(futures)
-      Await.result(combinedFuture, Duration.Inf)
+      Await.result(combinedFuture, Duration(parallelWriteTimeoutMinutes, MINUTES))
+    } catch {
+      case e: TimeoutException =>
+        logger.error(
+          s"Parallel checkpoint write timed out for version $version: " +
+            s"$numParts parts did not complete within $parallelWriteTimeoutMinutes minutes"
+        )
+        // Clean up any partial checkpoint files
+        cleanupPartialCheckpoint(version, numParts)
+        throw new RuntimeException(
+          s"Parallel checkpoint write for version $version timed out after " +
+            s"$parallelWriteTimeoutMinutes minutes ($numParts parts). " +
+            s"Consider increasing spark.indextables.checkpoint.multipart.parallelWriteTimeoutMinutes",
+          e
+        )
     } finally {
       ec match {
         case es: java.util.concurrent.ExecutorService => es.shutdown()
@@ -634,6 +656,12 @@ object ParquetCheckpointWriter {
   val MULTIPART_PARALLEL_WRITE_KEY = "spark.indextables.checkpoint.multipart.parallelWrite"
 
   /**
+   * Configuration key for parallel write timeout in minutes.
+   */
+  val MULTIPART_PARALLEL_WRITE_TIMEOUT_KEY =
+    "spark.indextables.checkpoint.multipart.parallelWriteTimeoutMinutes"
+
+  /**
    * Default value for multi-part enabled.
    */
   val DEFAULT_MULTIPART_ENABLED = false
@@ -647,6 +675,11 @@ object ParquetCheckpointWriter {
    * Default value for parallel write enabled.
    */
   val DEFAULT_PARALLEL_WRITE_ENABLED = true
+
+  /**
+   * Default parallel write timeout in minutes.
+   */
+  val DEFAULT_PARALLEL_WRITE_TIMEOUT_MINUTES = 30
 
   /**
    * Create a ParquetCheckpointWriter for a transaction log path.
