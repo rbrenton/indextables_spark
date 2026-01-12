@@ -467,7 +467,6 @@ class IndexTables4SparkStandardWrite(
         targetSize = targetSizeBytes,
         maxDestSplits = None, // No limit for counting
         maxSourceSplitsPerMerge = None, // Use config default
-        preCommitMerge = false,
         overrideOptions = Some(optionsToPass)
       )
 
@@ -527,7 +526,6 @@ class IndexTables4SparkStandardWrite(
         targetSize = targetSizeBytes,
         maxDestSplits = None, // No limit on groups for auto-merge
         maxSourceSplitsPerMerge = None, // Use config default
-        preCommitMerge = false,
         overrideOptions = Some(optionsToPass) // Pass write options directly
       )
 

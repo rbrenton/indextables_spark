@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory
  * behavior.
  *
  * Syntax: MERGE SPLITS ('/path/to/table' | table_name) [WHERE partition_predicates] [TARGET SIZE target_size] [MAX
- * GROUPS max_groups] [PRECOMMIT]
+ * GROUPS max_groups]
  *
  * Examples:
  *   - MERGE SPLITS '/path/to/table'
@@ -50,15 +50,15 @@ import org.slf4j.LoggerFactory
  *   - MERGE SPLITS '/path/to/table' WHERE year = 2023 TARGET SIZE 2147483648 -- 2GB
  *   - MERGE SPLITS my_table MAX GROUPS 5 -- Limit to 5 oldest merge groups
  *   - MERGE SPLITS '/path/to/table' TARGET SIZE 1G MAX GROUPS 3 -- 1GB target, max 3 groups
- *   - MERGE SPLITS events PRECOMMIT -- Pre-commit merge (framework complete, core implementation pending)
  *
  * This command:
  *   1. Merges only within partitions (follows Delta Lake OPTIMIZE pattern) 2. Selects mergeable splits in transaction
  *      log order 3. Concatenates splits up to configurable target size (default 5GB) 4. Assumes merged split size
  *      equals sum of input splits 5. Does not merge splits already at target size 6. Uses atomic REMOVE+ADD operations
  *      in transaction log 7. Ensures queries after merge only read merged splits 8. MAX GROUPS option: Limits merge
- *      operation to N oldest destination merge groups 9. PRECOMMIT option: Merges splits during write process before
- *      transaction log commit (eliminates small file problems at source - framework complete, core logic pending)
+ *      operation to N oldest destination merge groups
+ *
+ * Note: For pre-commit merge functionality, use spark.indextables.mergeOnWrite.enabled configuration option instead.
  */
 abstract class MergeSplitsCommandBase extends RunnableCommand {
 
@@ -100,8 +100,7 @@ case class MergeSplitsCommand(
   userPartitionPredicates: Seq[String],
   targetSize: Option[Long],
   maxDestSplits: Option[Int],
-  maxSourceSplitsPerMerge: Option[Int],
-  preCommitMerge: Boolean = false)
+  maxSourceSplitsPerMerge: Option[Int])
     extends MergeSplitsCommandBase
     with UnaryNode {
 
@@ -114,19 +113,6 @@ case class MergeSplitsCommand(
     // Validate target size first (for all cases)
     val actualTargetSize = targetSize.getOrElse(DEFAULT_TARGET_SIZE)
     validateTargetSize(actualTargetSize)
-
-    // Handle pre-commit merge early (before any table path resolution)
-    if (preCommitMerge) {
-      logger.info("PRE-COMMIT MERGE: Executing pre-commit merge functionality")
-      return Seq(
-        Row(
-          "PRE-COMMIT MERGE",
-          Row("pending", null, null, null, null, "Functionality pending implementation"),
-          null,
-          null
-        )
-      )
-    }
 
     // Resolve table path from child logical plan
     val tablePath =
@@ -184,8 +170,7 @@ case class MergeSplitsCommand(
         userPartitionPredicates,
         actualTargetSize,
         maxDestSplits,
-        maxSourceSplitsPerMerge,
-        preCommitMerge
+        maxSourceSplitsPerMerge
       ).merge()
     } finally
       transactionLog.close()
@@ -260,6 +245,8 @@ object MergeSplitsCommand {
 
   /**
    * Alternate constructor that converts a provided path or table identifier into the correct child LogicalPlan node.
+   * Note: preCommitMerge parameter is accepted for parser compatibility but ignored.
+   * Use spark.indextables.mergeOnWrite.enabled for pre-commit merge functionality.
    */
   def apply(
     path: Option[String],
@@ -268,10 +255,10 @@ object MergeSplitsCommand {
     targetSize: Option[Long],
     maxDestSplits: Option[Int],
     maxSourceSplitsPerMerge: Option[Int],
-    preCommitMerge: Boolean
+    preCommitMerge: Boolean // Ignored - kept for parser compatibility
   ): MergeSplitsCommand = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, "MERGE SPLITS")
-    MergeSplitsCommand(plan, userPartitionPredicates, targetSize, maxDestSplits, maxSourceSplitsPerMerge, preCommitMerge)
+    MergeSplitsCommand(plan, userPartitionPredicates, targetSize, maxDestSplits, maxSourceSplitsPerMerge)
   }
 
   /**
@@ -359,9 +346,9 @@ case class SerializableAwsConfig(
           case ex: Exception =>
             // Fall back to explicit credentials if provider fails
             System.err.println(
-              s"⚠️ [EXECUTOR] Failed to resolve credentials from provider $providerClassName: ${ex.getMessage}"
+              s"[EXECUTOR] Failed to resolve credentials from provider $providerClassName: ${ex.getMessage}"
             )
-            System.err.println(s"⚠️ [EXECUTOR] Falling back to explicit credentials")
+            System.err.println(s"[EXECUTOR] Falling back to explicit credentials")
             new QuickwitSplit.AwsConfig(
               accessKey,
               secretKey,
@@ -430,7 +417,6 @@ class MergeSplitsExecutor(
   targetSize: Long,
   maxDestSplits: Option[Int],
   maxSourceSplitsPerMerge: Option[Int],
-  preCommitMerge: Boolean = false,
   overrideOptions: Option[Map[String, String]] = None) {
 
   private val logger = LoggerFactory.getLogger(classOf[MergeSplitsExecutor])
@@ -516,19 +502,19 @@ class MergeSplitsExecutor(
         try {
           val dir = new java.io.File(path)
           if (!dir.exists()) {
-            logger.warn(s"⚠️ Custom temp directory does not exist: $path - will fall back to system temp directory")
+            logger.warn(s"Custom temp directory does not exist: $path - will fall back to system temp directory")
           } else if (!dir.isDirectory()) {
             logger.warn(
-              s"⚠️ Custom temp directory path is not a directory: $path - will fall back to system temp directory"
+              s"Custom temp directory path is not a directory: $path - will fall back to system temp directory"
             )
           } else if (!dir.canWrite()) {
-            logger.warn(s"⚠️ Custom temp directory is not writable: $path - will fall back to system temp directory")
+            logger.warn(s"Custom temp directory is not writable: $path - will fall back to system temp directory")
           } else {
-            logger.info(s"✅ Custom temp directory validated: $path")
+            logger.info(s"Custom temp directory validated: $path")
           }
         } catch {
           case ex: Exception =>
-            logger.warn(s"⚠️ Failed to validate custom temp directory '$path': ${ex.getMessage} - will fall back to system temp directory")
+            logger.warn(s"Failed to validate custom temp directory '$path': ${ex.getMessage} - will fall back to system temp directory")
         }
       }
 
@@ -607,30 +593,23 @@ class MergeSplitsExecutor(
     }
 
   def merge(): Seq[Row] = {
-    if (preCommitMerge) {
-      logger.info(
-        s"Starting PRE-COMMIT MERGE SPLITS operation for table: $tablePath with target size: $targetSize bytes"
-      )
-      return performPreCommitMerge()
-    }
-
     logger.info(s"Starting MERGE SPLITS operation for table: $tablePath with target size: $targetSize bytes")
 
     // Get current metadata to understand partition schema
     val metadata = transactionLog.getMetadata()
 
     // DEBUG: Log the metadata details
-    logger.info(s"MERGE DEBUG: Retrieved metadata from transaction log:")
-    logger.info(s"MERGE DEBUG:   Metadata ID: ${metadata.id}")
-    logger.info(s"MERGE DEBUG:   Partition columns: ${metadata.partitionColumns}")
-    logger.info(s"MERGE DEBUG:   Partition columns size: ${metadata.partitionColumns.size}")
-    logger.info(s"MERGE DEBUG:   Configuration: ${metadata.configuration}")
+    logger.debug(s"MERGE DEBUG: Retrieved metadata from transaction log:")
+    logger.debug(s"MERGE DEBUG:   Metadata ID: ${metadata.id}")
+    logger.debug(s"MERGE DEBUG:   Partition columns: ${metadata.partitionColumns}")
+    logger.debug(s"MERGE DEBUG:   Partition columns size: ${metadata.partitionColumns.size}")
+    logger.debug(s"MERGE DEBUG:   Configuration: ${metadata.configuration}")
 
     val partitionSchema = StructType(
       metadata.partitionColumns.map(name => StructField(name, StringType, nullable = true))
     )
 
-    logger.info(s"MERGE DEBUG: Constructed partition schema: ${partitionSchema.fieldNames.mkString(", ")}")
+    logger.debug(s"MERGE DEBUG: Constructed partition schema: ${partitionSchema.fieldNames.mkString(", ")}")
 
     // If no partition columns are defined in metadata, skip partition validation
     if (metadata.partitionColumns.isEmpty) {
@@ -924,7 +903,7 @@ class MergeSplitsExecutor(
 
                 // Always record skipped files regardless of whether merge was performed
                 if (skippedSplitPaths.nonEmpty) {
-                  logger.warn(s"⚠️  Merge operation skipped ${skippedSplitPaths.size} files (due to corruption/missing files): ${skippedSplitPaths.mkString(", ")}")
+                  logger.warn(s"Merge operation skipped ${skippedSplitPaths.size} files (due to corruption/missing files): ${skippedSplitPaths.mkString(", ")}")
 
                   // Record skipped files in transaction log with cooldown period
                   val cooldownHours =
@@ -963,7 +942,7 @@ class MergeSplitsExecutor(
 
                 // Check if no merge was performed (null or empty indexUid indicates this)
                 if (indexUid.isEmpty || indexUid.contains(null) || indexUid.exists(_.trim.isEmpty)) {
-                  logger.warn(s"⚠️  No merge was performed for group with ${result.mergeGroup.files.length} files (null/empty indexUid) - skipping ADD/REMOVE operations but preserving skipped files tracking")
+                  logger.warn(s"No merge was performed for group with ${result.mergeGroup.files.length} files (null/empty indexUid) - skipping ADD/REMOVE operations but preserving skipped files tracking")
 
                   // Return without performing ADD/REMOVE operations
                   // Note: We still recorded the skipped files above, which is the desired behavior
@@ -1037,13 +1016,13 @@ class MergeSplitsExecutor(
                       // CRITICAL DEBUG: Verify docMappingJson returned from tantivy4java merge
                       docMapping match {
                         case Some(json) =>
-                          logger.warn(
-                            s"✅ MERGE RESULT: docMappingJson extracted from merged split (${json.length} chars)"
+                          logger.debug(
+                            s"MERGE RESULT: docMappingJson extracted from merged split (${json.length} chars)"
                           )
-                          logger.warn(s"✅ MERGE RESULT: docMappingJson content: $json")
+                          logger.debug(s"MERGE RESULT: docMappingJson content: $json")
                         case None =>
                           logger.error(
-                            s"❌ MERGE RESULT: No docMappingJson in merged split metadata - tantivy4java did not preserve it!"
+                            s"MERGE RESULT: No docMappingJson in merged split metadata - tantivy4java did not preserve it!"
                           )
                       }
 
@@ -1077,10 +1056,10 @@ class MergeSplitsExecutor(
                   // CRITICAL DEBUG: Verify docMappingJson being saved to AddAction
                   docMappingJson match {
                     case Some(json) =>
-                      logger.warn(s"✅ TRANSACTION LOG: Saving AddAction with docMappingJson (${json.length} chars)")
-                      logger.warn(s"✅ TRANSACTION LOG: docMappingJson being saved: $json")
+                      logger.debug(s"TRANSACTION LOG: Saving AddAction with docMappingJson (${json.length} chars)")
+                      logger.debug(s"TRANSACTION LOG: docMappingJson being saved: $json")
                     case None =>
-                      logger.error(s"❌ TRANSACTION LOG: AddAction has NO docMappingJson - fast fields will be lost!")
+                      logger.error(s"TRANSACTION LOG: AddAction has NO docMappingJson - fast fields will be lost!")
                   }
 
                   val addAction = AddAction(
@@ -1181,32 +1160,6 @@ class MergeSplitsExecutor(
   }
 
   /**
-   * Performs pre-commit merge where splits are merged before being added to the transaction log. In this mode, original
-   * fragmental splits are deleted after the merged split is uploaded and the transaction log never sees the original
-   * splits.
-   */
-  private def performPreCommitMerge(): Seq[Row] = {
-    logger.info("PRE-COMMIT MERGE: This functionality merges splits before they appear in transaction log")
-    logger.info("PRE-COMMIT MERGE: Original fragmental splits are deleted and never logged")
-
-    // For pre-commit merge, we need to work with pending/staging splits rather than committed ones
-    // This would typically integrate with the write path to merge splits during the commit process
-
-    // TODO: Implement actual pre-commit merge logic that:
-    // 1. Identifies pending splits that haven't been committed yet
-    // 2. Groups them by partition
-    // 3. Merges groups that exceed fragmentation thresholds
-    // 4. Deletes original fragmental splits from storage
-    // 5. Commits only the merged splits to transaction log
-
-    logger.warn("PRE-COMMIT MERGE: Implementation pending - this is a placeholder")
-
-    Seq(
-      Row(tablePath.toString, Row("pending", null, null, null, null, "Functionality pending implementation"), null, null)
-    )
-  }
-
-  /**
    * Find groups of files that should be merged within a partition. Follows bin packing approach similar to Delta Lake's
    * OPTIMIZE. Only creates groups with 2+ files to satisfy tantivy4java merge requirements. CRITICAL: Ensures all files
    * in each group have identical partition values.
@@ -1234,7 +1187,7 @@ class MergeSplitsExecutor(
       throw new IllegalStateException(errorMsg)
     }
 
-    logger.debug(s"✅ Partition validation passed: All ${files.length} input files belong to partition $partitionValues")
+    logger.debug(s"Partition validation passed: All ${files.length} input files belong to partition $partitionValues")
 
     // Filter out files that are already at or above the skip threshold
     // Default: 45% of target size - prevents merging already-large splits
@@ -1292,10 +1245,10 @@ class MergeSplitsExecutor(
           }
 
           groups += MergeGroup(partitionValues, groupFiles)
-          logger.debug(s"MERGE DEBUG: ✓ Created merge group with ${currentGroup.length} files ($currentGroupSize bytes): ${currentGroup.map(_.path).mkString(", ")}")
+          logger.debug(s"MERGE DEBUG: Created merge group with ${currentGroup.length} files ($currentGroupSize bytes): ${currentGroup.map(_.path).mkString(", ")}")
         } else {
           logger.debug(
-            s"MERGE DEBUG: ✗ Discarding single-file group: ${currentGroup.head.path} ($currentGroupSize bytes)"
+            s"MERGE DEBUG: Discarding single-file group: ${currentGroup.head.path} ($currentGroupSize bytes)"
           )
         }
 
@@ -1325,9 +1278,9 @@ class MergeSplitsExecutor(
       }
 
       groups += MergeGroup(partitionValues, groupFiles)
-      logger.debug(s"✓ Created final merge group with ${currentGroup.length} files ($currentGroupSize bytes): ${currentGroup.map(_.path).mkString(", ")}")
+      logger.debug(s"Created final merge group with ${currentGroup.length} files ($currentGroupSize bytes): ${currentGroup.map(_.path).mkString(", ")}")
     } else if (currentGroup.length == 1) {
-      logger.debug(s"✗ Discarding final single-file group: ${currentGroup.head.path} ($currentGroupSize bytes)")
+      logger.debug(s"Discarding final single-file group: ${currentGroup.head.path} ($currentGroupSize bytes)")
     } else {
       logger.debug(s"No remaining group to process")
     }
@@ -1345,7 +1298,7 @@ class MergeSplitsExecutor(
     }
 
     logger.debug(s"MERGE DEBUG: Created ${groups.length} merge groups from ${mergeableFiles.length} mergeable files")
-    logger.info(s"✅ All ${groups.length} merge groups passed partition consistency validation")
+    logger.info(s"All ${groups.length} merge groups passed partition consistency validation")
     groups.toSeq
   }
 
@@ -1603,7 +1556,7 @@ object MergeSplitsExecutor {
     }
 
     logger.info(
-      s"✅ Partition validation passed: All ${mergeGroup.files.length} files belong to partition $groupPartitionValues"
+      s"Partition validation passed: All ${mergeGroup.files.length} files belong to partition $groupPartitionValues"
     )
 
     // Generate new split path with UUID for uniqueness
@@ -1628,13 +1581,13 @@ object MergeSplitsExecutor {
         if (file.path.startsWith("s3://") || file.path.startsWith("s3a://")) {
           // file.path is already a full S3 URL, just normalize the scheme
           val normalized = file.path.replaceFirst("^s3a://", "s3://")
-          logger.warn(s"🔄 [EXECUTOR] Normalized full S3 path: ${file.path} -> $normalized")
+          logger.debug(s"[EXECUTOR] Normalized full S3 path: ${file.path} -> $normalized")
           normalized
         } else {
           // file.path is relative, construct full URL with normalized scheme
           val normalizedBaseUri = tablePathStr.replaceFirst("^s3a://", "s3://").replaceAll("/$", "")
           val fullPath          = s"$normalizedBaseUri/${file.path}"
-          logger.warn(s"🔄 [EXECUTOR] Constructed relative S3 path: ${file.path} -> $fullPath")
+          logger.debug(s"[EXECUTOR] Constructed relative S3 path: ${file.path} -> $fullPath")
           fullPath
         }
       } else if (isAzurePath) {
@@ -1646,13 +1599,13 @@ object MergeSplitsExecutor {
         ) {
           // file.path is already a full Azure URL, normalize to azure://
           val normalized = normalizeAzureUrl(file.path)
-          logger.info(s"🔄 [EXECUTOR] Normalized full Azure path: ${file.path} -> $normalized")
+          logger.info(s"[EXECUTOR] Normalized full Azure path: ${file.path} -> $normalized")
           normalized
         } else {
           // file.path is relative, construct full URL with normalized scheme
           val normalizedBaseUri = normalizeAzureUrl(tablePathStr).replaceAll("/$", "")
           val fullPath          = s"$normalizedBaseUri/${file.path}"
-          logger.info(s"🔄 [EXECUTOR] Constructed relative Azure path: ${file.path} -> $fullPath")
+          logger.info(s"[EXECUTOR] Constructed relative Azure path: ${file.path} -> $fullPath")
           fullPath
         }
       } else {
@@ -1667,13 +1620,13 @@ object MergeSplitsExecutor {
       // For S3 paths, construct the URL directly with s3:// normalization for tantivy4java compatibility
       val normalizedBaseUri = tablePathStr.replaceFirst("^s3a://", "s3://").replaceAll("/$", "")
       val outputPath        = s"$normalizedBaseUri/$mergedPath"
-      logger.warn(s"🔄 [EXECUTOR] Normalized output path: $tablePathStr/$mergedPath -> $outputPath")
+      logger.debug(s"[EXECUTOR] Normalized output path: $tablePathStr/$mergedPath -> $outputPath")
       outputPath
     } else if (isAzurePath) {
       // For Azure paths, construct the URL with azure:// normalization for tantivy4java compatibility
       val normalizedBaseUri = normalizeAzureUrl(tablePathStr).replaceAll("/$", "")
       val outputPath        = s"$normalizedBaseUri/$mergedPath"
-      logger.warn(s"🔄 [EXECUTOR] Normalized Azure output path: $tablePathStr/$mergedPath -> $outputPath")
+      logger.debug(s"[EXECUTOR] Normalized Azure output path: $tablePathStr/$mergedPath -> $outputPath")
       outputPath
     } else {
       // For local/HDFS paths, extract raw path for tantivy4java (not file: URI)
@@ -1694,7 +1647,7 @@ object MergeSplitsExecutor {
             logger.debug(s"SOURCE SPLIT[$idx]: ${file.path} HAS docMappingJson (${json.length} chars)")
             logger.debug(s"SOURCE SPLIT[$idx]: Content: $json")
           case None =>
-            logger.error(s"❌ SOURCE SPLIT[$idx]: ${file.path} has NO docMappingJson!")
+            logger.error(s"SOURCE SPLIT[$idx]: ${file.path} has NO docMappingJson!")
         }
     }
 
@@ -1707,7 +1660,7 @@ object MergeSplitsExecutor {
         logger.error(errorMsg)
         throw new IllegalStateException(errorMsg)
       }
-    logger.warn(s"✅ MERGE INPUT: Using docMappingJson from source split[0]: $docMappingJson")
+    logger.debug(s"MERGE INPUT: Using docMappingJson from source split[0]: $docMappingJson")
 
     // Create merge configuration with broadcast AWS and Azure credentials and temp directory
     val mergeConfigBuilder = QuickwitSplit.MergeConfig
@@ -1736,14 +1689,14 @@ object MergeSplitsExecutor {
     val mergeConfig = mergeConfigBuilder.build()
 
     // Perform the actual merge using direct/in-process merge
-    logger.warn(s"⚙️  [EXECUTOR] Executing direct merge with ${inputSplitPaths.size()} input paths")
-    logger.warn(s"📁 [EXECUTOR] Input paths:")
+    logger.debug(s"[EXECUTOR] Executing direct merge with ${inputSplitPaths.size()} input paths")
+    logger.debug(s"[EXECUTOR] Input paths:")
     inputSplitPaths.asScala.zipWithIndex.foreach {
       case (path, idx) =>
-        logger.warn(s"📁 [EXECUTOR]   [$idx]: $path")
+        logger.debug(s"[EXECUTOR]   [$idx]: $path")
     }
-    logger.warn(s"📁 [EXECUTOR] Output path: $outputSplitPath")
-    logger.warn(s"📁 [EXECUTOR] Relative path for transaction log: $mergedPath")
+    logger.debug(s"[EXECUTOR] Output path: $outputSplitPath")
+    logger.debug(s"[EXECUTOR] Relative path for transaction log: $mergedPath")
     logger.info(s"[EXECUTOR] Executing direct merge with ${inputSplitPaths.size()} input paths")
 
     val serializedMetadata =
@@ -1751,11 +1704,10 @@ object MergeSplitsExecutor {
         awsConfig.executeMerge(inputSplitPaths, outputSplitPath, mergeConfig)
       catch {
         case ex: Exception =>
-          println(
-            s"💥 [EXECUTOR] CRITICAL: Direct merge threw exception: ${ex.getClass.getSimpleName}: ${ex.getMessage}"
+          logger.error(
+            s"[EXECUTOR] CRITICAL: Direct merge threw exception: ${ex.getClass.getSimpleName}: ${ex.getMessage}",
+            ex
           )
-          logger.error(s"[EXECUTOR] Direct merge failed", ex)
-          ex.printStackTrace()
           throw new RuntimeException(s"Direct merge operation failed: ${ex.getMessage}", ex)
       }
 

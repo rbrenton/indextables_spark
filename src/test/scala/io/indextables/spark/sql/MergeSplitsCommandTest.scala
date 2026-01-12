@@ -180,7 +180,6 @@ class MergeSplitsCommandTest extends TestBase with BeforeAndAfterEach {
     val parsedTableId  = sqlParser.parsePlan(tableIdCommand).asInstanceOf[MergeSplitsCommand]
 
     assert(parsedTableId.isInstanceOf[MergeSplitsCommand])
-    assert(!parsedTableId.preCommitMerge, "PRECOMMIT should be false by default")
 
     // Test simple table name
     val simpleTableCommand = "MERGE SPLITS events"
@@ -197,13 +196,12 @@ class MergeSplitsCommandTest extends TestBase with BeforeAndAfterEach {
     assert(parsedTableWithWhere.userPartitionPredicates.head == "date >= '2023-01-01'")
 
     // Test table name with all options (Delta Lake OPTIMIZE style with extensions)
-    val fullTableCommand = "MERGE SPLITS my_db.events WHERE year = 2023 TARGET SIZE 1073741824 PRECOMMIT"
+    val fullTableCommand = "MERGE SPLITS my_db.events WHERE year = 2023 TARGET SIZE 1073741824"
     val parsedFullTable  = sqlParser.parsePlan(fullTableCommand).asInstanceOf[MergeSplitsCommand]
 
     assert(parsedFullTable.isInstanceOf[MergeSplitsCommand])
     assert(parsedFullTable.userPartitionPredicates.head == "year = 2023")
     assert(parsedFullTable.targetSize.contains(1073741824L))
-    assert(parsedFullTable.preCommitMerge)
   }
 
   test("MERGE SPLITS should reject invalid syntax") {
@@ -252,58 +250,6 @@ class MergeSplitsCommandTest extends TestBase with BeforeAndAfterEach {
 
     // Verify the default constant is 5GB (accessing through base class)
     // Note: The actual constant value is verified indirectly through parsing tests above
-  }
-
-  test("PRECOMMIT option should be parsed correctly") {
-    import io.indextables.spark.sql.MergeSplitsCommand
-
-    val sqlParser = new IndexTables4SparkSqlParser(spark.sessionState.sqlParser)
-
-    // Test basic PRECOMMIT syntax
-    val precommitCommand = "MERGE SPLITS '/path/to/table' PRECOMMIT"
-    val parsedPrecommit  = sqlParser.parsePlan(precommitCommand).asInstanceOf[MergeSplitsCommand]
-
-    assert(parsedPrecommit.preCommitMerge, "PRECOMMIT flag should be true")
-    assert(parsedPrecommit.targetSize.isEmpty, "Target size should be None (use default)")
-    assert(parsedPrecommit.userPartitionPredicates.isEmpty, "No WHERE predicates")
-
-    // Test PRECOMMIT with other options
-    val fullCommand = "MERGE SPLITS '/path/to/table' WHERE year = 2023 TARGET SIZE 1073741824 PRECOMMIT"
-    val parsedFull  = sqlParser.parsePlan(fullCommand).asInstanceOf[MergeSplitsCommand]
-
-    assert(parsedFull.preCommitMerge, "PRECOMMIT flag should be true")
-    assert(parsedFull.targetSize.contains(1073741824L), "Target size should be 1GB")
-    assert(parsedFull.userPartitionPredicates.nonEmpty, "Should have WHERE predicate")
-    assert(parsedFull.userPartitionPredicates.head == "year = 2023", "WHERE predicate should match")
-
-    // Test without PRECOMMIT (default false)
-    val normalCommand = "MERGE SPLITS '/path/to/table'"
-    val parsedNormal  = sqlParser.parsePlan(normalCommand).asInstanceOf[MergeSplitsCommand]
-
-    assert(!parsedNormal.preCommitMerge, "PRECOMMIT flag should be false by default")
-  }
-
-  test("PRECOMMIT execution should return appropriate message") {
-    import io.indextables.spark.sql.MergeSplitsCommand
-
-    val sqlParser = new IndexTables4SparkSqlParser(spark.sessionState.sqlParser)
-    val command   = sqlParser.parsePlan(s"MERGE SPLITS '$tempTablePath' PRECOMMIT").asInstanceOf[MergeSplitsCommand]
-
-    // Verify preCommitMerge flag is set correctly
-    assert(command.preCommitMerge, "PreCommit flag should be true")
-
-    // This should complete without errors (even though table doesn't exist)
-    // since PRECOMMIT functionality is currently a placeholder
-    val result = command.run(spark)
-
-    assert(result.nonEmpty, "Should return result")
-    assert(result.head.getString(0) == "PRE-COMMIT MERGE", "Should indicate pre-commit merge in first column")
-    val metricsRow = result.head.getStruct(1)
-    assert(metricsRow.getString(0) == "pending", "Status should be 'pending'")
-    assert(
-      metricsRow.getString(5).contains("Functionality pending implementation"),
-      "Should indicate functionality pending"
-    )
   }
 
   test("MERGE SPLITS should handle S3 paths correctly") {
