@@ -373,16 +373,22 @@ class IndexTables4SparkScan(
     finalActions
   }
 
-  // TODO: Fix options flow from read operations to scan for proper field type detection
-  // /**
-  //  * Check if a field is configured as a text field (tokenized) for data skipping purposes.
-  //  * Uses the indexing configuration to determine field type.
-  //  * Currently disabled due to options flow issues.
-  //  */
-  // private def isTextFieldForTokenization(fieldName: String): Boolean = {
-  //   // Implementation commented out - options don't flow correctly from read to scan
-  //   false
-  // }
+  /**
+   * Get a configuration value, checking reader options first, then session config.
+   * This ensures options passed at read time take precedence over session-level config.
+   */
+  private def getConfigValue(key: String): Option[String] =
+    Option(options.get(key)).orElse(config.get(key))
+
+  /**
+   * Check if a field is configured as a text field (tokenized) for data skipping purposes.
+   * Text fields are tokenized and should use different comparison logic than string fields.
+   * Defaults to "string" (non-tokenized) if not explicitly configured.
+   */
+  private def isTextFieldForTokenization(fieldName: String): Boolean = {
+    val fieldType = getConfigValue(s"spark.indextables.indexing.typemap.$fieldName")
+    fieldType.exists(_.toLowerCase == "text")
+  }
 
   private def getFilterReferencedColumns(filter: Filter): Set[String] = {
     import org.apache.spark.sql.sources._
