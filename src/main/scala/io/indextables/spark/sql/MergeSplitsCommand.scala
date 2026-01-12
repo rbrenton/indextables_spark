@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory
  * behavior.
  *
  * Syntax: MERGE SPLITS ('/path/to/table' | table_name) [WHERE partition_predicates] [TARGET SIZE target_size] [MAX
- * GROUPS max_groups] [PRECOMMIT]
+ * GROUPS max_groups]
  *
  * Examples:
  *   - MERGE SPLITS '/path/to/table'
@@ -50,15 +50,15 @@ import org.slf4j.LoggerFactory
  *   - MERGE SPLITS '/path/to/table' WHERE year = 2023 TARGET SIZE 2147483648 -- 2GB
  *   - MERGE SPLITS my_table MAX GROUPS 5 -- Limit to 5 oldest merge groups
  *   - MERGE SPLITS '/path/to/table' TARGET SIZE 1G MAX GROUPS 3 -- 1GB target, max 3 groups
- *   - MERGE SPLITS events PRECOMMIT -- Pre-commit merge (framework complete, core implementation pending)
  *
  * This command:
  *   1. Merges only within partitions (follows Delta Lake OPTIMIZE pattern) 2. Selects mergeable splits in transaction
  *      log order 3. Concatenates splits up to configurable target size (default 5GB) 4. Assumes merged split size
  *      equals sum of input splits 5. Does not merge splits already at target size 6. Uses atomic REMOVE+ADD operations
  *      in transaction log 7. Ensures queries after merge only read merged splits 8. MAX GROUPS option: Limits merge
- *      operation to N oldest destination merge groups 9. PRECOMMIT option: Merges splits during write process before
- *      transaction log commit (eliminates small file problems at source - framework complete, core logic pending)
+ *      operation to N oldest destination merge groups
+ *
+ * Note: For pre-commit merge functionality, use spark.indextables.mergeOnWrite.enabled configuration option instead.
  */
 abstract class MergeSplitsCommandBase extends RunnableCommand {
 
@@ -100,8 +100,7 @@ case class MergeSplitsCommand(
   userPartitionPredicates: Seq[String],
   targetSize: Option[Long],
   maxDestSplits: Option[Int],
-  maxSourceSplitsPerMerge: Option[Int],
-  preCommitMerge: Boolean = false)
+  maxSourceSplitsPerMerge: Option[Int])
     extends MergeSplitsCommandBase
     with UnaryNode {
 
@@ -114,19 +113,6 @@ case class MergeSplitsCommand(
     // Validate target size first (for all cases)
     val actualTargetSize = targetSize.getOrElse(DEFAULT_TARGET_SIZE)
     validateTargetSize(actualTargetSize)
-
-    // Handle pre-commit merge early (before any table path resolution)
-    if (preCommitMerge) {
-      logger.info("PRE-COMMIT MERGE: Executing pre-commit merge functionality")
-      return Seq(
-        Row(
-          "PRE-COMMIT MERGE",
-          Row("pending", null, null, null, null, "Functionality pending implementation"),
-          null,
-          null
-        )
-      )
-    }
 
     // Resolve table path from child logical plan
     val tablePath =
@@ -184,8 +170,7 @@ case class MergeSplitsCommand(
         userPartitionPredicates,
         actualTargetSize,
         maxDestSplits,
-        maxSourceSplitsPerMerge,
-        preCommitMerge
+        maxSourceSplitsPerMerge
       ).merge()
     } finally
       transactionLog.close()
@@ -260,6 +245,8 @@ object MergeSplitsCommand {
 
   /**
    * Alternate constructor that converts a provided path or table identifier into the correct child LogicalPlan node.
+   * Note: preCommitMerge parameter is accepted for parser compatibility but ignored.
+   * Use spark.indextables.mergeOnWrite.enabled for pre-commit merge functionality.
    */
   def apply(
     path: Option[String],
@@ -268,10 +255,10 @@ object MergeSplitsCommand {
     targetSize: Option[Long],
     maxDestSplits: Option[Int],
     maxSourceSplitsPerMerge: Option[Int],
-    preCommitMerge: Boolean
+    preCommitMerge: Boolean // Ignored - kept for parser compatibility
   ): MergeSplitsCommand = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, "MERGE SPLITS")
-    MergeSplitsCommand(plan, userPartitionPredicates, targetSize, maxDestSplits, maxSourceSplitsPerMerge, preCommitMerge)
+    MergeSplitsCommand(plan, userPartitionPredicates, targetSize, maxDestSplits, maxSourceSplitsPerMerge)
   }
 
   /**
@@ -430,7 +417,6 @@ class MergeSplitsExecutor(
   targetSize: Long,
   maxDestSplits: Option[Int],
   maxSourceSplitsPerMerge: Option[Int],
-  preCommitMerge: Boolean = false,
   overrideOptions: Option[Map[String, String]] = None) {
 
   private val logger = LoggerFactory.getLogger(classOf[MergeSplitsExecutor])
@@ -607,13 +593,6 @@ class MergeSplitsExecutor(
     }
 
   def merge(): Seq[Row] = {
-    if (preCommitMerge) {
-      logger.info(
-        s"Starting PRE-COMMIT MERGE SPLITS operation for table: $tablePath with target size: $targetSize bytes"
-      )
-      return performPreCommitMerge()
-    }
-
     logger.info(s"Starting MERGE SPLITS operation for table: $tablePath with target size: $targetSize bytes")
 
     // Get current metadata to understand partition schema
@@ -1177,32 +1156,6 @@ class MergeSplitsExecutor(
         awsConfig.tempDirectoryPath.getOrElse(null),
         if (awsConfig.heapSize == null) null else awsConfig.heapSize.asInstanceOf[Long]
       )
-    )
-  }
-
-  /**
-   * Performs pre-commit merge where splits are merged before being added to the transaction log. In this mode, original
-   * fragmental splits are deleted after the merged split is uploaded and the transaction log never sees the original
-   * splits.
-   */
-  private def performPreCommitMerge(): Seq[Row] = {
-    logger.info("PRE-COMMIT MERGE: This functionality merges splits before they appear in transaction log")
-    logger.info("PRE-COMMIT MERGE: Original fragmental splits are deleted and never logged")
-
-    // For pre-commit merge, we need to work with pending/staging splits rather than committed ones
-    // This would typically integrate with the write path to merge splits during the commit process
-
-    // TODO: Implement actual pre-commit merge logic that:
-    // 1. Identifies pending splits that haven't been committed yet
-    // 2. Groups them by partition
-    // 3. Merges groups that exceed fragmentation thresholds
-    // 4. Deletes original fragmental splits from storage
-    // 5. Commits only the merged splits to transaction log
-
-    logger.debug("PRE-COMMIT MERGE: Implementation pending - this is a placeholder")
-
-    Seq(
-      Row(tablePath.toString, Row("pending", null, null, null, null, "Functionality pending implementation"), null, null)
     )
   }
 
