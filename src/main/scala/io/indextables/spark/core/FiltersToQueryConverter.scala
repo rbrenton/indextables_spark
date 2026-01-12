@@ -736,9 +736,16 @@ object FiltersToQueryConverter {
         case EqualNullSafe(attribute, value) =>
           if (value == null) {
             queryLog(s"Creating EqualNullSafe query for null: $attribute IS NULL")
-            // For null values, we could return a query that matches no documents
-            // or handle this differently based on requirements
-            Query.allQuery() // TODO: Implement proper null handling
+            // For null values, match documents where the field does not exist
+            // Use NOT field:* pattern - BooleanQuery with MUST allQuery and MUST_NOT wildcardQuery
+            queryLog(s"Using BooleanQuery with MUST_NOT wildcardQuery for null check on field '$attribute'")
+            val allQuery = Query.allQuery()
+            val existsQuery = Query.wildcardQuery(schema, attribute, "*", true)
+            val occurQueries = java.util.Arrays.asList(
+              new Query.OccurQuery(Occur.MUST, allQuery),
+              new Query.OccurQuery(Occur.MUST_NOT, existsQuery)
+            )
+            Query.booleanQuery(occurQueries)
           } else {
             queryLog(s"Creating EqualNullSafe query: $attribute = $value")
             val fieldType = getFieldType(schema, attribute)
@@ -816,9 +823,16 @@ object FiltersToQueryConverter {
 
         case IsNull(attribute) =>
           queryLog(s"Creating IsNull query: $attribute IS NULL")
-          // For IsNull, we could return a query that matches no documents
-          // TODO: Implement proper null handling if needed
-          Query.allQuery()
+          // Match documents where the field does not exist
+          // Use NOT field:* pattern - BooleanQuery with MUST allQuery and MUST_NOT wildcardQuery
+          queryLog(s"Using BooleanQuery with MUST_NOT wildcardQuery for IsNull on field '$attribute'")
+          val allQuery = Query.allQuery()
+          val existsQuery = Query.wildcardQuery(schema, attribute, "*", true)
+          val occurQueries = java.util.Arrays.asList(
+            new Query.OccurQuery(Occur.MUST, allQuery),
+            new Query.OccurQuery(Occur.MUST_NOT, existsQuery)
+          )
+          Query.booleanQuery(occurQueries)
 
         case IsNotNull(attribute) =>
           queryLog(s"Creating IsNotNull query: $attribute IS NOT NULL")
@@ -1298,10 +1312,18 @@ object FiltersToQueryConverter {
           Some(boolQuery)
         }
 
-      case IsNotNull(_) =>
-        // TODO: Use proper exists query when available
-        // For now, MatchAllQuery returns all documents - Spark will filter nulls
-        Some(new SplitMatchAllQuery())
+      case IsNotNull(attribute) =>
+        // Use parseQuery with field:* pattern to match documents where the field has a value
+        // Tantivy only indexes non-null values, so field:* matches all docs with non-null values
+        try {
+          val queryString = s"$attribute:*"
+          queryLog(s"Creating IsNotNull SplitQuery with parseQuery: $queryString")
+          Some(splitSearchEngine.parseQuery(queryString))
+        } catch {
+          case e: Exception =>
+            queryLog(s"Failed to create parseQuery for IsNotNull: ${e.getMessage}")
+            None
+        }
 
       // For complex operations like range queries, wildcard queries, etc., fall back to string parsing
       case GreaterThan(attribute, value) =>
