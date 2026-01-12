@@ -139,8 +139,34 @@ class IndexTables4SparkBatchWrite(
       case _                                   => Seq.empty[AddAction]
     }
 
-    // In a real implementation, we would delete the physical files here
-    logger.warn(s"Would clean up ${addActions.length} uncommitted files")
+    if (addActions.nonEmpty) {
+      logger.info(s"Cleaning up ${addActions.length} uncommitted files during abort")
+
+      // Extract serialized config for cloud credentials
+      val serializedHadoopConf =
+        io.indextables.spark.util.ConfigNormalization.extractTantivyConfigsFromHadoop(hadoopConf)
+      val serializedOptions =
+        io.indextables.spark.util.ConfigNormalization.extractTantivyConfigsFromOptions(options)
+
+      // Combine options for cloud credentials
+      val combinedOptions = serializedHadoopConf ++ serializedOptions
+
+      // Use WriteAbortCleaner for graceful cleanup with retry logic
+      val result = WriteAbortCleaner.cleanupUncommittedFiles(
+        addActions,
+        tablePath,
+        combinedOptions,
+        serializedHadoopConf
+      )
+
+      if (result.failedCount > 0) {
+        logger.warn(s"Abort cleanup completed: ${result.deletedCount} files deleted, ${result.failedCount} files failed to delete")
+      } else {
+        logger.info(s"Abort cleanup completed: ${result.deletedCount} files deleted (${result.totalBytes} bytes)")
+      }
+    } else {
+      logger.info("No uncommitted files to clean up during abort")
+    }
   }
 }
 
