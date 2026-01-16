@@ -17,9 +17,17 @@
 
 package io.indextables.spark.transaction
 
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{
+  BinaryComparison,
+  BoundReference,
+  Cast,
+  Expression,
+  In,
+  Literal
+}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.types._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -132,7 +140,10 @@ object PartitionPredicateUtils {
   }
 
   /**
-   * Resolve an expression against a schema to handle UnresolvedAttribute references and cast literals to UTF8String.
+   * Resolve an expression against a schema to handle UnresolvedAttribute references.
+   *
+   * For numeric comparisons (e.g., month BETWEEN 1 AND 6), the string partition value is cast to the literal's type to
+   * enable proper numeric comparison instead of lexicographic string comparison.
    *
    * @param expression
    *   The expression to resolve
@@ -141,22 +152,79 @@ object PartitionPredicateUtils {
    * @return
    *   Resolved expression ready for evaluation
    */
-  def resolveExpression(expression: Expression, schema: StructType): Expression =
+  def resolveExpression(expression: Expression, schema: StructType): Expression = {
+    // First pass: infer target types for columns based on literals used in comparisons
+    val columnTypeHints = inferColumnTypesFromExpression(expression)
+
     expression.transform {
-      case unresolvedAttr: org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute =>
+      case unresolvedAttr: UnresolvedAttribute =>
         val fieldName  = unresolvedAttr.name
         val fieldIndex = schema.fieldIndex(fieldName)
         val field      = schema(fieldIndex)
-        org.apache.spark.sql.catalyst.expressions.BoundReference(fieldIndex, field.dataType, field.nullable)
-      case literal: org.apache.spark.sql.catalyst.expressions.Literal =>
-        // Cast all literals to UTF8String since partition values are stored as strings
-        literal.dataType match {
-          case StringType => literal
-          case _          =>
-            // Convert non-string literals to UTF8String for comparison with partition values
-            org.apache.spark.sql.catalyst.expressions.Literal(UTF8String.fromString(literal.value.toString), StringType)
+        val boundRef   = BoundReference(fieldIndex, field.dataType, field.nullable)
+
+        // If this column is compared with a numeric literal, wrap with Cast
+        columnTypeHints.get(fieldName) match {
+          case Some(targetType) if targetType != StringType =>
+            Cast(boundRef, targetType)
+          case _ =>
+            boundRef
         }
+
+      case literal: Literal =>
+        // Keep literals in their original type (don't convert to string)
+        literal
     }
+  }
+
+  /**
+   * Analyze an expression to infer the expected type for each column based on the types of literals used in
+   * comparisons. This enables proper numeric comparison when partition values (stored as strings) are compared with
+   * numeric literals.
+   *
+   * For example, in `month BETWEEN 1 AND 6`, this will infer that `month` should be cast to IntegerType.
+   *
+   * @param expression
+   *   The expression to analyze
+   * @return
+   *   Map of column names to their inferred target types
+   */
+  private def inferColumnTypesFromExpression(expression: Expression): Map[String, DataType] = {
+    val typeHints = scala.collection.mutable.Map[String, DataType]()
+
+    def extractFromOperands(left: Expression, right: Expression): Unit =
+      (left, right) match {
+        case (attr: UnresolvedAttribute, lit: Literal) if isNumericOrDateType(lit.dataType) =>
+          typeHints(attr.name) = lit.dataType
+        case (lit: Literal, attr: UnresolvedAttribute) if isNumericOrDateType(lit.dataType) =>
+          typeHints(attr.name) = lit.dataType
+        case _ => // No type hint
+      }
+
+    expression.foreach {
+      case cmp: BinaryComparison =>
+        extractFromOperands(cmp.left, cmp.right)
+      case In(attr: UnresolvedAttribute, values) =>
+        values.collectFirst {
+          case lit: Literal if isNumericOrDateType(lit.dataType) => lit.dataType
+        }.foreach { dt => typeHints(attr.name) = dt }
+      case _ => // Continue traversing
+    }
+
+    typeHints.toMap
+  }
+
+  /**
+   * Check if a data type is numeric or date-related, which would benefit from type-aware comparison instead of string
+   * comparison.
+   */
+  private def isNumericOrDateType(dataType: DataType): Boolean = dataType match {
+    case IntegerType | LongType | ShortType | ByteType => true
+    case FloatType | DoubleType                        => true
+    case _: DecimalType                                => true
+    case DateType | TimestampType                      => true
+    case _                                             => false
+  }
 
   /**
    * Evaluate whether a partition matches the given predicates.

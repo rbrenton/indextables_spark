@@ -31,7 +31,7 @@ import org.apache.spark.unsafe.types.UTF8String
 
 import org.apache.hadoop.fs.Path
 
-import io.indextables.spark.transaction.{AddAction, RemoveAction, TransactionLog, TransactionLogFactory}
+import io.indextables.spark.transaction.{AddAction, PartitionPredicateUtils, RemoveAction, TransactionLog, TransactionLogFactory}
 import io.indextables.spark.util.ConfigNormalization
 import io.indextables.tantivy4java.split.merge.QuickwitSplit
 import org.slf4j.LoggerFactory
@@ -1446,7 +1446,8 @@ class MergeSplitsExecutor(
         parsedPredicates.forall { predicate =>
           try {
             // Resolve the expression against the partition schema before evaluation
-            val resolvedPredicate = resolveExpression(predicate, partitionSchema)
+            // Use shared utility for proper numeric comparison support
+            val resolvedPredicate = PartitionPredicateUtils.resolveExpression(predicate, partitionSchema)
             resolvedPredicate.eval(row).asInstanceOf[Boolean]
           } catch {
             case ex: Exception =>
@@ -1484,27 +1485,6 @@ class MergeSplitsExecutor(
     }
     InternalRow.fromSeq(values)
   }
-
-  /**
-   * Resolve an expression against a schema to handle UnresolvedAttribute references and cast literals to UTF8String.
-   */
-  private def resolveExpression(expression: Expression, schema: StructType): Expression =
-    expression.transform {
-      case unresolvedAttr: org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute =>
-        val fieldName  = unresolvedAttr.name
-        val fieldIndex = schema.fieldIndex(fieldName)
-        val field      = schema(fieldIndex)
-        org.apache.spark.sql.catalyst.expressions.BoundReference(fieldIndex, field.dataType, field.nullable)
-      case literal: org.apache.spark.sql.catalyst.expressions.Literal =>
-        // Cast all literals to UTF8String since partition values are stored as strings
-        import org.apache.spark.sql.types._
-        literal.dataType match {
-          case StringType => literal
-          case _          =>
-            // Convert non-string literals to UTF8String for comparison with partition values
-            org.apache.spark.sql.catalyst.expressions.Literal(UTF8String.fromString(literal.value.toString), StringType)
-        }
-    }
 }
 
 /** Companion object for MergeSplitsExecutor with static methods for distributed execution. */
