@@ -413,14 +413,12 @@ class DropPartitionsIntegrationTest extends AnyFunSuite with BeforeAndAfterEach 
     assert(afterDrop.filter($"month" === 6).count() == 1)
   }
 
-  test("DROP INDEXTABLES PARTITIONS with BETWEEN predicate should use numeric comparison for double-digit values") {
-    // This test verifies that BETWEEN uses numeric comparison, not lexicographic string comparison.
-    // With lexicographic comparison, "10" < "2" (because '1' < '2'), which would cause incorrect filtering.
+  test("DROP INDEXTABLES PARTITIONS with BETWEEN should use numeric comparison for double-digit values") {
+    // Validates numeric (not lexicographic) comparison: "10" should NOT be < "2"
     val tablePath = s"$tempDir/between_numeric_test"
 
     val sparkSession = spark
     import sparkSession.implicits._
-    // Create data with months 1-12 to test double-digit values
     val data = (1 to 12).map(month => (month, s"Data$month", month)).toDF("id", "name", "month")
 
     data.write
@@ -429,28 +427,18 @@ class DropPartitionsIntegrationTest extends AnyFunSuite with BeforeAndAfterEach 
       .mode("overwrite")
       .save(tablePath)
 
-    // Drop partitions where month BETWEEN 2 AND 6
-    // With proper numeric comparison: months 2, 3, 4, 5, 6 should be dropped (5 partitions)
-    // With buggy string comparison: months 10, 11, 12 would NOT be affected (they would incorrectly be < "2")
+    // Drop months 2-6, leaving 1 and 7-12
     val result = spark.sql(s"DROP INDEXTABLES PARTITIONS FROM '$tablePath' WHERE month BETWEEN 2 AND 6").collect()
     assert(result.length == 1)
     assert(result(0).getString(1) == "success")
 
-    // Verify data after drop - should see months 1, 7, 8, 9, 10, 11, 12 (7 partitions remaining)
     val afterDrop = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider").load(tablePath)
-    assert(afterDrop.count() == 7, s"Expected 7 rows (months 1, 7-12), got ${afterDrop.count()}")
-
-    // Verify specific months remain
-    assert(afterDrop.filter($"month" === 1).count() == 1, "Month 1 should remain")
-    assert(afterDrop.filter($"month" === 7).count() == 1, "Month 7 should remain")
-    assert(afterDrop.filter($"month" === 10).count() == 1, "Month 10 should remain (not dropped by BETWEEN 2 AND 6)")
-    assert(afterDrop.filter($"month" === 11).count() == 1, "Month 11 should remain")
-    assert(afterDrop.filter($"month" === 12).count() == 1, "Month 12 should remain")
-
-    // Verify dropped months are gone
-    assert(afterDrop.filter($"month" === 2).count() == 0, "Month 2 should be dropped")
-    assert(afterDrop.filter($"month" === 3).count() == 0, "Month 3 should be dropped")
-    assert(afterDrop.filter($"month" === 6).count() == 0, "Month 6 should be dropped")
+    assert(afterDrop.count() == 7)
+    assert(afterDrop.filter($"month" === 1).count() == 1)
+    assert(afterDrop.filter($"month" === 10).count() == 1)
+    assert(afterDrop.filter($"month" === 12).count() == 1)
+    assert(afterDrop.filter($"month" === 2).count() == 0)
+    assert(afterDrop.filter($"month" === 6).count() == 0)
   }
 
   test("Multiple DROP INDEXTABLES PARTITIONS operations should be cumulative") {

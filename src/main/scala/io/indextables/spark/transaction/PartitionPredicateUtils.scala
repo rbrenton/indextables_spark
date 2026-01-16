@@ -140,20 +140,10 @@ object PartitionPredicateUtils {
   }
 
   /**
-   * Resolve an expression against a schema to handle UnresolvedAttribute references.
-   *
-   * For numeric comparisons (e.g., month BETWEEN 1 AND 6), the string partition value is cast to the literal's type to
-   * enable proper numeric comparison instead of lexicographic string comparison.
-   *
-   * @param expression
-   *   The expression to resolve
-   * @param schema
-   *   Schema to resolve against
-   * @return
-   *   Resolved expression ready for evaluation
+   * Resolve an expression against a schema to handle UnresolvedAttribute references. For numeric comparisons, casts
+   * string partition values to the literal's type for proper numeric (not lexicographic) comparison.
    */
   def resolveExpression(expression: Expression, schema: StructType): Expression = {
-    // First pass: infer target types for columns based on literals used in comparisons
     val columnTypeHints = inferColumnTypesFromExpression(expression)
 
     expression.transform {
@@ -163,32 +153,16 @@ object PartitionPredicateUtils {
         val field      = schema(fieldIndex)
         val boundRef   = BoundReference(fieldIndex, field.dataType, field.nullable)
 
-        // If this column is compared with a numeric literal, wrap with Cast
         columnTypeHints.get(fieldName) match {
-          case Some(targetType) if targetType != StringType =>
-            Cast(boundRef, targetType)
-          case _ =>
-            boundRef
+          case Some(targetType) if targetType != StringType => Cast(boundRef, targetType)
+          case _                                            => boundRef
         }
 
-      case literal: Literal =>
-        // Keep literals in their original type (don't convert to string)
-        literal
+      case literal: Literal => literal
     }
   }
 
-  /**
-   * Analyze an expression to infer the expected type for each column based on the types of literals used in
-   * comparisons. This enables proper numeric comparison when partition values (stored as strings) are compared with
-   * numeric literals.
-   *
-   * For example, in `month BETWEEN 1 AND 6`, this will infer that `month` should be cast to IntegerType.
-   *
-   * @param expression
-   *   The expression to analyze
-   * @return
-   *   Map of column names to their inferred target types
-   */
+  /** Infer target types for columns based on literals used in comparisons. */
   private def inferColumnTypesFromExpression(expression: Expression): Map[String, DataType] = {
     val typeHints = scala.collection.mutable.Map[String, DataType]()
 
@@ -198,7 +172,7 @@ object PartitionPredicateUtils {
           typeHints(attr.name) = lit.dataType
         case (lit: Literal, attr: UnresolvedAttribute) if isNumericOrDateType(lit.dataType) =>
           typeHints(attr.name) = lit.dataType
-        case _ => // No type hint
+        case _ =>
       }
 
     expression.foreach {
@@ -208,16 +182,12 @@ object PartitionPredicateUtils {
         values.collectFirst {
           case lit: Literal if isNumericOrDateType(lit.dataType) => lit.dataType
         }.foreach { dt => typeHints(attr.name) = dt }
-      case _ => // Continue traversing
+      case _ =>
     }
 
     typeHints.toMap
   }
 
-  /**
-   * Check if a data type is numeric or date-related, which would benefit from type-aware comparison instead of string
-   * comparison.
-   */
   private def isNumericOrDateType(dataType: DataType): Boolean = dataType match {
     case IntegerType | LongType | ShortType | ByteType => true
     case FloatType | DoubleType                        => true
