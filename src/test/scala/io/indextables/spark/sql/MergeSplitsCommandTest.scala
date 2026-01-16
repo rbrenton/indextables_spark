@@ -1022,4 +1022,58 @@ class MergeSplitsCommandTest extends TestBase with BeforeAndAfterEach {
     assert(eligible.length == 3, s"Zero and tiny files should be eligible, got ${eligible.length}")
     assert(eligible.map(_.path).contains("zero.split"), "Zero-size file should be eligible")
   }
+
+  // === BETWEEN Operator Tests ===
+
+  test("MERGE SPLITS should parse with BETWEEN predicate using string values") {
+    val sqlParser = new IndexTables4SparkSqlParser(spark.sessionState.sqlParser)
+    val command   = "MERGE SPLITS '/path/to/table' WHERE load_date BETWEEN '2025-01-01' AND '2025-12-31'"
+    val parsed    = sqlParser.parsePlan(command).asInstanceOf[MergeSplitsCommand]
+
+    assert(parsed.userPartitionPredicates.nonEmpty)
+    assert(parsed.userPartitionPredicates.head.contains("BETWEEN") || parsed.userPartitionPredicates.head.contains("between"))
+    assert(parsed.userPartitionPredicates.head.contains("load_date"))
+  }
+
+  test("MERGE SPLITS should parse with BETWEEN predicate using numeric values") {
+    val sqlParser = new IndexTables4SparkSqlParser(spark.sessionState.sqlParser)
+    val command   = "MERGE SPLITS '/path/to/table' WHERE month BETWEEN 1 AND 6"
+    val parsed    = sqlParser.parsePlan(command).asInstanceOf[MergeSplitsCommand]
+
+    assert(parsed.userPartitionPredicates.nonEmpty)
+    assert(parsed.userPartitionPredicates.head.contains("BETWEEN") || parsed.userPartitionPredicates.head.contains("between"))
+    assert(parsed.userPartitionPredicates.head.contains("month"))
+  }
+
+  test("MERGE SPLITS should parse with BETWEEN combined with TARGET SIZE") {
+    val sqlParser = new IndexTables4SparkSqlParser(spark.sessionState.sqlParser)
+    val command   = "MERGE SPLITS '/path/to/table' WHERE month BETWEEN 1 AND 6 TARGET SIZE 100M"
+    val parsed    = sqlParser.parsePlan(command).asInstanceOf[MergeSplitsCommand]
+
+    assert(parsed.userPartitionPredicates.nonEmpty)
+    assert(parsed.userPartitionPredicates.head.contains("BETWEEN") || parsed.userPartitionPredicates.head.contains("between"))
+    assert(parsed.targetSize.isDefined)
+  }
+
+  test("MERGE SPLITS should parse with BETWEEN combined with equality predicate") {
+    val sqlParser = new IndexTables4SparkSqlParser(spark.sessionState.sqlParser)
+    val command   = "MERGE SPLITS '/path/to/table' WHERE year = '2024' AND month BETWEEN 1 AND 6"
+    val parsed    = sqlParser.parsePlan(command).asInstanceOf[MergeSplitsCommand]
+
+    assert(parsed.userPartitionPredicates.nonEmpty)
+    assert(parsed.userPartitionPredicates.head.contains("year"))
+    assert(parsed.userPartitionPredicates.head.contains("BETWEEN") || parsed.userPartitionPredicates.head.contains("between"))
+  }
+
+  test("MERGE SPLITS should parse with multiple BETWEEN predicates") {
+    val sqlParser = new IndexTables4SparkSqlParser(spark.sessionState.sqlParser)
+    val command   = "MERGE SPLITS '/path/to/table' WHERE month BETWEEN 1 AND 6 AND day BETWEEN 10 AND 20"
+    val parsed    = sqlParser.parsePlan(command).asInstanceOf[MergeSplitsCommand]
+
+    assert(parsed.userPartitionPredicates.nonEmpty)
+    val predicateText = parsed.userPartitionPredicates.head.toLowerCase
+    assert(predicateText.contains("month"))
+    assert(predicateText.contains("day"))
+    assert(predicateText.contains("between"))
+  }
 }

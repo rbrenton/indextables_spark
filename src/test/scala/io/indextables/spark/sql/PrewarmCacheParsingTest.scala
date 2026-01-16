@@ -298,4 +298,88 @@ class PrewarmCacheParsingTest extends AnyFunSuite with BeforeAndAfterEach {
     }
     assert(ex.getMessage.contains("Unknown segment type"))
   }
+
+  // === BETWEEN Operator Tests ===
+
+  test("PREWARM should parse with BETWEEN predicate using string values") {
+    val sql  = "PREWARM INDEXTABLES CACHE '/tmp/test' WHERE load_date BETWEEN '2025-01-01' AND '2025-12-31'"
+    val plan = spark.sessionState.sqlParser.parsePlan(sql)
+    assert(plan.isInstanceOf[PrewarmCacheCommand])
+
+    val cmd = plan.asInstanceOf[PrewarmCacheCommand]
+    assert(cmd.wherePredicates.nonEmpty)
+    assert(cmd.wherePredicates.head.contains("BETWEEN") || cmd.wherePredicates.head.contains("between"))
+    assert(cmd.wherePredicates.head.contains("load_date"))
+    assert(cmd.wherePredicates.head.contains("2025-01-01"))
+    assert(cmd.wherePredicates.head.contains("2025-12-31"))
+  }
+
+  test("PREWARM should parse with BETWEEN predicate using numeric values") {
+    val sql  = "PREWARM INDEXTABLES CACHE '/tmp/test' WHERE month BETWEEN 1 AND 6"
+    val plan = spark.sessionState.sqlParser.parsePlan(sql)
+    assert(plan.isInstanceOf[PrewarmCacheCommand])
+
+    val cmd = plan.asInstanceOf[PrewarmCacheCommand]
+    assert(cmd.wherePredicates.nonEmpty)
+    assert(cmd.wherePredicates.head.contains("BETWEEN") || cmd.wherePredicates.head.contains("between"))
+    assert(cmd.wherePredicates.head.contains("month"))
+  }
+
+  test("PREWARM should parse with BETWEEN combined with equality predicate") {
+    val sql  = "PREWARM INDEXTABLES CACHE '/tmp/test' WHERE year = '2024' AND month BETWEEN 1 AND 6"
+    val plan = spark.sessionState.sqlParser.parsePlan(sql)
+    assert(plan.isInstanceOf[PrewarmCacheCommand])
+
+    val cmd = plan.asInstanceOf[PrewarmCacheCommand]
+    assert(cmd.wherePredicates.nonEmpty)
+    assert(cmd.wherePredicates.head.contains("year"))
+    assert(cmd.wherePredicates.head.contains("BETWEEN") || cmd.wherePredicates.head.contains("between"))
+    assert(cmd.wherePredicates.head.contains("AND") || cmd.wherePredicates.head.contains("and"))
+  }
+
+  test("PREWARM should parse with BETWEEN in full command with all clauses") {
+    val sql = """
+      PREWARM INDEXTABLES CACHE 's3://bucket/table'
+        FOR SEGMENTS (TERM_DICT, POSTINGS)
+        ON FIELDS (title, content)
+        WITH PERWORKER PARALLELISM OF 4
+        WHERE load_date BETWEEN '2025-01-01' AND '2025-06-30'
+    """.stripMargin.replaceAll("\n", " ")
+
+    val plan = spark.sessionState.sqlParser.parsePlan(sql)
+    assert(plan.isInstanceOf[PrewarmCacheCommand])
+
+    val cmd = plan.asInstanceOf[PrewarmCacheCommand]
+    assert(cmd.tablePath == "s3://bucket/table")
+    assert(cmd.segments.size == 2)
+    assert(cmd.fields.isDefined)
+    assert(cmd.fields.get.size == 2)
+    assert(cmd.splitsPerTask == 4)
+    assert(cmd.wherePredicates.nonEmpty)
+    assert(cmd.wherePredicates.head.contains("BETWEEN") || cmd.wherePredicates.head.contains("between"))
+  }
+
+  test("PREWARM should parse with multiple BETWEEN predicates") {
+    val sql  = "PREWARM INDEXTABLES CACHE '/tmp/test' WHERE month BETWEEN 1 AND 6 AND day BETWEEN 10 AND 20"
+    val plan = spark.sessionState.sqlParser.parsePlan(sql)
+    assert(plan.isInstanceOf[PrewarmCacheCommand])
+
+    val cmd = plan.asInstanceOf[PrewarmCacheCommand]
+    assert(cmd.wherePredicates.nonEmpty)
+    // Should contain both BETWEEN clauses in the raw predicate text
+    val predicateText = cmd.wherePredicates.head.toLowerCase
+    assert(predicateText.contains("month"))
+    assert(predicateText.contains("day"))
+    assert(predicateText.contains("between"))
+  }
+
+  test("PREWARM should parse with BETWEEN using case-insensitive keywords") {
+    val sql  = "prewarm indextables cache '/tmp/test' where month between 1 and 6"
+    val plan = spark.sessionState.sqlParser.parsePlan(sql)
+    assert(plan.isInstanceOf[PrewarmCacheCommand])
+
+    val cmd = plan.asInstanceOf[PrewarmCacheCommand]
+    assert(cmd.wherePredicates.nonEmpty)
+    assert(cmd.wherePredicates.head.contains("between") || cmd.wherePredicates.head.contains("BETWEEN"))
+  }
 }

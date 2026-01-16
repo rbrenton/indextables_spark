@@ -393,6 +393,12 @@ PREWARM INDEXTABLES CACHE 's3://bucket/path' ON FIELDS (title, content, timestam
 -- Prewarm with partition filter
 PREWARM INDEXTABLES CACHE 's3://bucket/path' WHERE date >= '2024-01-01';
 
+-- Prewarm with BETWEEN predicate for date ranges
+PREWARM INDEXTABLES CACHE 's3://bucket/path' WHERE load_date BETWEEN '2025-01-01' AND '2025-06-30';
+
+-- Prewarm with BETWEEN and other predicates
+PREWARM INDEXTABLES CACHE 's3://bucket/path' WHERE year = '2024' AND month BETWEEN 1 AND 6;
+
 -- Prewarm with custom parallelism (splits per task)
 PREWARM INDEXTABLES CACHE 's3://bucket/path' WITH PERWORKER PARALLELISM OF 5;
 
@@ -459,6 +465,8 @@ MERGE SPLITS 's3://bucket/path' TARGET SIZE 100M;
 MERGE SPLITS 's3://bucket/path' MAX DEST SPLITS 10;  -- Limit to 10 destination (merged) splits
 MERGE SPLITS 's3://bucket/path' MAX SOURCE SPLITS PER MERGE 500;  -- Limit source splits per merge
 MERGE SPLITS 's3://bucket/path' WHERE date = '2024-01-01' TARGET SIZE 100M;
+MERGE SPLITS 's3://bucket/path' WHERE load_date BETWEEN '2025-01-01' AND '2025-06-30' TARGET SIZE 100M;
+MERGE SPLITS 's3://bucket/path' WHERE year = '2024' AND month BETWEEN 1 AND 6 TARGET SIZE 100M;
 MERGE SPLITS 's3://bucket/path' TARGET SIZE 1G MAX DEST SPLITS 5 MAX SOURCE SPLITS PER MERGE 100;
 ```
 
