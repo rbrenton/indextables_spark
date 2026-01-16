@@ -565,6 +565,14 @@ spark.sql("PURGE INDEXTABLE 's3://bucket/table' OLDER THAN 7 DAYS").show()
 - Fails if table has no partition columns defined
 - Returns no_action if no partitions match the predicates
 
+**Partition Predicate Type Handling:**
+- Partition values are stored as strings in the transaction log
+- Numeric and date literals in WHERE clauses trigger automatic type casting
+- Mixed numeric types are promoted to the wider type (e.g., `month > 2 AND month < 6.5` uses Double)
+- Supported comparison types: Integer, Long, Float, Double, Date, Timestamp
+- Invalid casts (e.g., "abc" compared to numeric) silently exclude the partition
+- Applies to all partition-filtering commands: `PREWARM`, `MERGE SPLITS`, `DROP PARTITIONS`
+
 ### Describe Disk Cache
 ```sql
 -- View disk cache statistics across all executors

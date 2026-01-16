@@ -441,6 +441,55 @@ class DropPartitionsIntegrationTest extends AnyFunSuite with BeforeAndAfterEach 
     assert(afterDrop.filter($"month" === 6).count() == 0)
   }
 
+  test("DROP INDEXTABLES PARTITIONS with BETWEEN exact match should delete single partition") {
+    val tablePath = s"$tempDir/between_exact_test"
+
+    val sparkSession = spark
+    import sparkSession.implicits._
+    val data = (1 to 5).map(month => (month, s"Data$month", month)).toDF("id", "name", "month")
+
+    data.write
+      .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
+      .partitionBy("month")
+      .mode("overwrite")
+      .save(tablePath)
+
+    // BETWEEN 3 AND 3 should only delete month 3
+    val result = spark.sql(s"DROP INDEXTABLES PARTITIONS FROM '$tablePath' WHERE month BETWEEN 3 AND 3").collect()
+    assert(result.length == 1)
+    assert(result(0).getString(1) == "success")
+
+    val afterDrop = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider").load(tablePath)
+    assert(afterDrop.count() == 4)
+    assert(afterDrop.filter($"month" === 3).count() == 0)
+    assert(afterDrop.filter($"month" === 2).count() == 1)
+    assert(afterDrop.filter($"month" === 4).count() == 1)
+  }
+
+  test("DROP INDEXTABLES PARTITIONS with BETWEEN combined with OR") {
+    val tablePath = s"$tempDir/between_or_test"
+
+    val sparkSession = spark
+    import sparkSession.implicits._
+    val data = (1 to 10).map(month => (month, s"Data$month", month)).toDF("id", "name", "month")
+
+    data.write
+      .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
+      .partitionBy("month")
+      .mode("overwrite")
+      .save(tablePath)
+
+    // Delete months 2-3 OR 7-8
+    val result = spark.sql(
+      s"DROP INDEXTABLES PARTITIONS FROM '$tablePath' WHERE month BETWEEN 2 AND 3 OR month BETWEEN 7 AND 8"
+    ).collect()
+    assert(result.length == 1)
+    assert(result(0).getString(1) == "success")
+
+    val afterDrop = spark.read.format("io.indextables.spark.core.IndexTables4SparkTableProvider").load(tablePath)
+    assert(afterDrop.count() == 6) // 1, 4, 5, 6, 9, 10 remain
+  }
+
   test("Multiple DROP INDEXTABLES PARTITIONS operations should be cumulative") {
     val tablePath = s"$tempDir/cumulative_test"
 

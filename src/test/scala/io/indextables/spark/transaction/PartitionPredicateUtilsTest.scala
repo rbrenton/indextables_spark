@@ -27,7 +27,8 @@ import org.apache.spark.sql.catalyst.expressions.{
   In,
   LessThan,
   LessThanOrEqual,
-  Literal
+  Literal,
+  Not
 }
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.types._
@@ -287,5 +288,62 @@ class PartitionPredicateUtilsTest extends AnyFunSuite with Matchers {
 
     val smallAmount = Map("amount" -> "50.25")
     PartitionPredicateUtils.evaluatePredicates(smallAmount, schema, Seq(gtExpr)) shouldBe false
+  }
+
+  test("mixed int and double literals should promote to double") {
+    val schema = StructType(Seq(StructField("value", StringType, nullable = true)))
+
+    // Simulates: value > 2 AND value < 6.5 (int and double mixed)
+    val mixedExpr = And(
+      GreaterThan(UnresolvedAttribute("value"), Literal(2)),      // IntegerType
+      LessThan(UnresolvedAttribute("value"), Literal(6.5))        // DoubleType
+    )
+
+    // "5" should match (2 < 5.0 < 6.5)
+    val value5 = Map("value" -> "5")
+    PartitionPredicateUtils.evaluatePredicates(value5, schema, Seq(mixedExpr)) shouldBe true
+
+    // "2" should NOT match (not > 2)
+    val value2 = Map("value" -> "2")
+    PartitionPredicateUtils.evaluatePredicates(value2, schema, Seq(mixedExpr)) shouldBe false
+
+    // "6.5" should NOT match (not < 6.5)
+    val value65 = Map("value" -> "6.5")
+    PartitionPredicateUtils.evaluatePredicates(value65, schema, Seq(mixedExpr)) shouldBe false
+  }
+
+  test("mixed int and long literals should promote to long") {
+    val schema = StructType(Seq(StructField("id", StringType, nullable = true)))
+
+    // Simulates: id >= 100 AND id <= 1000000000000L (int and long mixed)
+    val mixedExpr = And(
+      GreaterThanOrEqual(UnresolvedAttribute("id"), Literal(100)),           // IntegerType
+      LessThanOrEqual(UnresolvedAttribute("id"), Literal(1000000000000L))    // LongType
+    )
+
+    val validId = Map("id" -> "500000000000")
+    PartitionPredicateUtils.evaluatePredicates(validId, schema, Seq(mixedExpr)) shouldBe true
+
+    val smallId = Map("id" -> "50")
+    PartitionPredicateUtils.evaluatePredicates(smallId, schema, Seq(mixedExpr)) shouldBe false
+  }
+
+  test("type promotion should handle same column in multiple comparisons") {
+    val schema = StructType(Seq(StructField("score", StringType, nullable = true)))
+
+    // Simulates: score > 10 AND score < 20 AND score != 15.5 (multiple comparisons)
+    val multiExpr = And(
+      And(
+        GreaterThan(UnresolvedAttribute("score"), Literal(10)),    // IntegerType
+        LessThan(UnresolvedAttribute("score"), Literal(20))        // IntegerType
+      ),
+      Not(EqualTo(UnresolvedAttribute("score"), Literal(15.5)))    // DoubleType - should promote
+    )
+
+    val score12 = Map("score" -> "12")
+    PartitionPredicateUtils.evaluatePredicates(score12, schema, Seq(multiExpr)) shouldBe true
+
+    val score155 = Map("score" -> "15.5")
+    PartitionPredicateUtils.evaluatePredicates(score155, schema, Seq(multiExpr)) shouldBe false
   }
 }

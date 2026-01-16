@@ -421,6 +421,39 @@ class PrewarmCacheCommandTest extends AnyFunSuite with BeforeAndAfterEach {
     logger.info("PREWARM parallelism variations test passed")
   }
 
+  // === BETWEEN Predicate Tests ===
+
+  test("PREWARM with BETWEEN predicate should filter partitions correctly") {
+    // Create partitioned test data with months 1-12
+    val ss = spark
+    import ss.implicits._
+
+    val data = (1 to 12).map { month =>
+      (month.toLong, s"title_$month", s"content for month $month", month)
+    }.toDF("id", "title", "content", "month")
+
+    data.write
+      .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
+      .option("spark.indextables.indexWriter.batchSize", "50")
+      .partitionBy("month")
+      .mode("overwrite")
+      .save(tempTablePath)
+
+    // Execute PREWARM with BETWEEN predicate
+    val result = spark.sql(
+      s"PREWARM INDEXTABLES CACHE '$tempTablePath' WHERE month BETWEEN 3 AND 8"
+    ).collect()
+
+    assert(result.nonEmpty, "Prewarm should return results")
+    result.foreach { row =>
+      val status = row.getAs[String]("status")
+      assert(status == "success" || status == "partial" || status == "no_splits",
+        s"Prewarm status should be valid, got: $status")
+    }
+
+    logger.info("PREWARM with BETWEEN predicate test passed")
+  }
+
   // === Tests that would catch implementation gaps ===
 
   test("PREWARM ON FIELDS should record field-specific prewarm in locality manager") {

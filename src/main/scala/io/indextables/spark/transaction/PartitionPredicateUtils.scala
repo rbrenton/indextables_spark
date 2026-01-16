@@ -166,12 +166,22 @@ object PartitionPredicateUtils {
   private def inferColumnTypesFromExpression(expression: Expression): Map[String, DataType] = {
     val typeHints = scala.collection.mutable.Map[String, DataType]()
 
+    def addTypeHint(columnName: String, newType: DataType): Unit =
+      typeHints.get(columnName) match {
+        case None => typeHints(columnName) = newType
+        case Some(existingType) =>
+          promoteNumericTypes(existingType, newType).foreach { promoted =>
+            typeHints(columnName) = promoted
+          }
+          // For non-promotable conflicts (e.g., Int + Date), keep the first type
+      }
+
     def extractFromOperands(left: Expression, right: Expression): Unit =
       (left, right) match {
         case (attr: UnresolvedAttribute, lit: Literal) if isNumericOrDateType(lit.dataType) =>
-          typeHints(attr.name) = lit.dataType
+          addTypeHint(attr.name, lit.dataType)
         case (lit: Literal, attr: UnresolvedAttribute) if isNumericOrDateType(lit.dataType) =>
-          typeHints(attr.name) = lit.dataType
+          addTypeHint(attr.name, lit.dataType)
         case _ =>
       }
 
@@ -181,11 +191,43 @@ object PartitionPredicateUtils {
       case In(attr: UnresolvedAttribute, values) =>
         values.collectFirst {
           case lit: Literal if isNumericOrDateType(lit.dataType) => lit.dataType
-        }.foreach { dt => typeHints(attr.name) = dt }
+        }.foreach { dt => addTypeHint(attr.name, dt) }
       case _ =>
     }
 
     typeHints.toMap
+  }
+
+  /**
+   * Promote two numeric types to the wider type.
+   * Returns Some(promotedType) if promotion is possible, None otherwise.
+   * Promotion rules:
+   *   - Int + Long -> Long
+   *   - Int + Double -> Double
+   *   - Long + Double -> Double
+   *   - Same types -> that type
+   *   - Non-promotable (e.g., Int + Date) -> None (keep first)
+   */
+  private def promoteNumericTypes(type1: DataType, type2: DataType): Option[DataType] = {
+    if (type1 == type2) return Some(type1)
+
+    val numericPrecedence: Map[DataType, Int] = Map(
+      ByteType    -> 1,
+      ShortType   -> 2,
+      IntegerType -> 3,
+      LongType    -> 4,
+      FloatType   -> 5,
+      DoubleType  -> 6
+    )
+
+    (numericPrecedence.get(type1), numericPrecedence.get(type2)) match {
+      case (Some(p1), Some(p2)) =>
+        // Both are numeric - promote to the wider type
+        Some(if (p1 >= p2) type1 else type2)
+      case _ =>
+        // At least one is non-numeric (Date, Timestamp, Decimal) - no promotion
+        None
+    }
   }
 
   private def isNumericOrDateType(dataType: DataType): Boolean = dataType match {
@@ -215,11 +257,13 @@ object PartitionPredicateUtils {
   ): Boolean = {
     if (predicates.isEmpty) return true
 
+    // Resolve all predicates once before evaluation loop
+    val resolvedPredicates = predicates.map(p => resolveExpression(p, partitionSchema))
+
     val row = createRowFromPartitionValues(partitionValues, partitionSchema)
-    predicates.forall { predicate =>
+    resolvedPredicates.forall { resolvedPredicate =>
       try {
-        val resolvedPredicate = resolveExpression(predicate, partitionSchema)
-        val result            = resolvedPredicate.eval(row)
+        val result = resolvedPredicate.eval(row)
         if (result == null) false else result.asInstanceOf[Boolean]
       } catch {
         case ex: Exception =>

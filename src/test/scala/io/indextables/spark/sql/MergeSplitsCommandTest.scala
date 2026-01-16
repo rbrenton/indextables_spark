@@ -1076,4 +1076,43 @@ class MergeSplitsCommandTest extends TestBase with BeforeAndAfterEach {
     assert(predicateText.contains("day"))
     assert(predicateText.contains("between"))
   }
+
+  test("MERGE SPLITS with BETWEEN predicate should filter partitions correctly") {
+    // Create partitioned test data with months 1-12
+    val ss = spark
+    import ss.implicits._
+
+    // Write data for multiple months (3 writes each to create splits worth merging)
+    for (_ <- 1 to 3) {
+      val data = (1 to 12).flatMap { month =>
+        (1 to 10).map { i =>
+          (month * 100 + i, s"content for month $month record $i", month)
+        }
+      }.toDF("id", "content", "month")
+
+      data.write
+        .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
+        .partitionBy("month")
+        .mode("append")
+        .save(tempTablePath)
+    }
+
+    // Get initial count
+    val initialCount = spark.read
+      .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
+      .load(tempTablePath).count()
+
+    // Execute MERGE SPLITS with BETWEEN predicate (months 3-8)
+    val result = spark.sql(
+      s"MERGE SPLITS '$tempTablePath' WHERE month BETWEEN 3 AND 8 TARGET SIZE 100M"
+    )
+    result.show(truncate = false)
+
+    // Verify data integrity preserved
+    val finalCount = spark.read
+      .format("io.indextables.spark.core.IndexTables4SparkTableProvider")
+      .load(tempTablePath).count()
+
+    assert(finalCount == initialCount, s"Data count should be preserved: $initialCount -> $finalCount")
+  }
 }
