@@ -219,7 +219,8 @@ object PartitionPredicateUtils {
     predicates.forall { predicate =>
       try {
         val resolvedPredicate = resolveExpression(predicate, partitionSchema)
-        resolvedPredicate.eval(row).asInstanceOf[Boolean]
+        val result            = resolvedPredicate.eval(row)
+        if (result == null) false else result.asInstanceOf[Boolean]
       } catch {
         case ex: Exception =>
           logger.warn(s"Failed to evaluate predicate against partition $partitionValues: ${ex.getMessage}")
